@@ -2,11 +2,11 @@ workflows:
   ios-simulator:
     name: iOS Simulator Build (BrowserStack)
     instance_type: mac_mini_m1
-    max_build_duration: 30
+    max_build_duration: 60
     
     environment:
       flutter: stable
-      xcode: latest
+      xcode: 15.2
       cocoapods: default
     
     scripts:
@@ -14,9 +14,12 @@ workflows:
         script: |
           flutter pub get
       
-      - name: Install CocoaPods dependencies
+      - name: Clean and install CocoaPods
         script: |
-          cd ios && pod install
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod repo update
+          pod install --repo-update
       
       - name: Build iOS Simulator app
         script: |
