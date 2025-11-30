@@ -1,0 +1,45 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # Prefer const constructors
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true
+    
+    # Avoid print statements in production code
+    avoid_print: true
+    
+    # Prefer final for local variables
+    prefer_final_locals: true
+    
+    # Avoid unnecessary containers
+    avoid_unnecessary_containers: true
+    
+    # Prefer single quotes for strings
+    prefer_single_quotes: true
+    
+    # Sort child properties last
+    sort_child_properties_last: true
+    
+    # Use trailing commas
+    require_trailing_commas: true
+    
+    # Always declare return types
+    always_declare_return_types: true
+    
+    # Avoid relative imports
+    avoid_relative_lib_imports: true
+    
+    # Prefer if null operators
+    prefer_if_null_operators: true
+    
+    # Use null-aware operators
+    prefer_null_aware_operators: true
+    
+    # Avoid empty else statements
+    avoid_empty_else: true
+    
+    # Prefer isEmpty and isNotEmpty
+    prefer_is_empty: true
+    prefer_is_not_empty: true

@@ -1,0 +1,71 @@
+name: soundfly_ios
+description: Soundfly Music Streaming App for iOS - A Flutter WebView application that connects to your Soundfly web backend.
+publish_to: 'none'
+version: 14.0.0+14000
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # WebView for displaying the Soundfly web app
+  webview_flutter: ^4.4.2
+  
+  # Connectivity check
+  connectivity_plus: ^5.0.2
+  
+  # Google Mobile Ads (AdMob)
+  google_mobile_ads: ^4.0.0
+  
+  # Firebase for push notifications
+  firebase_core: ^2.24.2
+  firebase_messaging: ^14.7.10
+  
+  # Local notifications
+  flutter_local_notifications: ^16.3.0
+  
+  # Shared preferences for storing settings
+  shared_preferences: ^2.2.2
+  
+  # URL launcher for external links
+  url_launcher: ^6.2.2
+  
+  # Cupertino icons for iOS styling
+  cupertino_icons: ^1.0.6
+  
+  # Path provider for file downloads
+  path_provider: ^2.1.2
+  
+  # Permission handler
+  permission_handler: ^11.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: false
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  remove_alpha_ios: true
+  background_color_ios: "#FF3044"
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/icons/
+    - assets/images/
+  
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
