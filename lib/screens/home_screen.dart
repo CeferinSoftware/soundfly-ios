@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -28,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isConnected = true;
   int _pageLoadCount = 0;
   DateTime? _lastBackPress;
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
 
   @override
   void initState() {
@@ -84,9 +83,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _initializeConnectivity() {
     _connectivitySubscription = Connectivity()
         .onConnectivityChanged
-        .listen((List<ConnectivityResult> results) {
-      final isConnected = results.isNotEmpty && 
-          results.first != ConnectivityResult.none;
+        .listen((ConnectivityResult result) {
+      final isConnected = result != ConnectivityResult.none;
       
       if (isConnected != _isConnected) {
         setState(() {
@@ -107,10 +105,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _checkConnectivity() async {
-    final results = await Connectivity().checkConnectivity();
+    final result = await Connectivity().checkConnectivity();
     setState(() {
-      _isConnected = results.isNotEmpty && 
-          results.first != ConnectivityResult.none;
+      _isConnected = result != ConnectivityResult.none;
     });
   }
 
