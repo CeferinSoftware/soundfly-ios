@@ -32,30 +32,14 @@ target 'Runner' do
   use_modular_headers!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-  
-  # Firebase pods
-  # pod 'Firebase/Core'
-  # pod 'Firebase/Messaging'
-  
-  # Google Mobile Ads
-  # pod 'Google-Mobile-Ads-SDK'
-end
-
-target 'NotificationServiceExtension' do
-  use_frameworks!
-  # pod 'Firebase/Messaging'
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     
-    # Fix for Xcode 14+ build issues
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
-      
-      # Required for arm64 simulator builds on M1 Macs
-      config.build_settings["EXCLUDED_ARCHS[sdk=iphonesimulator*]"] = "arm64"
     end
   end
 end
