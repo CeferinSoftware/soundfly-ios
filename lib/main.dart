@@ -4,6 +4,7 @@ import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'services/admob_service.dart';
+import 'services/push_notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,8 +27,10 @@ void main() async {
     await AdMobService.initialize();
   }
   
-  // Push notifications disabled for now due to Firebase/Xcode compatibility
-  // Will be enabled in a future update
+  // Initialize push notifications if enabled
+  if (AppConfig.pushNotificationsEnabled) {
+    await PushNotificationService.initialize();
+  }
   
   runApp(const SoundflyApp());
 }
