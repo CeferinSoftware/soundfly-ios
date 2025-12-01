@@ -1,6 +1,9 @@
 workflows:
+  # ============================================
+  # iOS Simulator Build (para BrowserStack simulador)
+  # ============================================
   ios-simulator:
-    name: iOS Simulator Build (BrowserStack)
+    name: iOS Simulator Build
     instance_type: mac_mini_m1
     max_build_duration: 60
     
@@ -30,3 +33,115 @@ workflows:
     artifacts:
       - build/ios/iphonesimulator/Runner.zip
       - build/ios/iphonesimulator/Runner.app
+
+  # ============================================
+  # iOS Release Build (IPA para dispositivos reales)
+  # ============================================
+  ios-release:
+    name: iOS Release Build (IPA)
+    instance_type: mac_mini_m1
+    max_build_duration: 90
+    integrations:
+      app_store_connect: Soundfly iOS  # Nombre de tu integración en Codemagic
+    
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store  # Cambiar a 'ad_hoc' para testing o 'app_store' para publicar
+        bundle_identifier: com.scriptwriter.soundflyios
+      vars:
+        APP_STORE_APPLE_ID: 123456789  # Tu Apple ID de la app (cambiar después de crear en App Store Connect)
+    
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      
+      - name: Clean and install CocoaPods
+        script: |
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod repo update
+          pod install --repo-update
+      
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files $(xcode-project detect-bundle-id) --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+      
+      - name: Build iOS Release IPA
+        script: |
+          flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+    
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    
+    publishing:
+      email:
+        recipients:
+          - newshellweb@gmail.com
+        notify:
+          success: true
+          failure: true
+      # Descomentar para publicar automáticamente en App Store Connect:
+      # app_store_connect:
+      #   auth: integration
+      #   submit_to_testflight: true
+
+  # ============================================
+  # iOS Ad-Hoc Build (IPA para testing en BrowserStack dispositivos reales)
+  # ============================================
+  ios-adhoc:
+    name: iOS Ad-Hoc Build (Testing IPA)
+    instance_type: mac_mini_m1
+    max_build_duration: 90
+    integrations:
+      app_store_connect: Soundfly iOS
+    
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: ad_hoc
+        bundle_identifier: com.scriptwriter.soundflyios
+    
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      
+      - name: Clean and install CocoaPods
+        script: |
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod repo update
+          pod install --repo-update
+      
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files $(xcode-project detect-bundle-id) --type IOS_APP_ADHOC --create
+          keychain add-certificates
+          xcode-project use-profiles
+      
+      - name: Build iOS Ad-Hoc IPA
+        script: |
+          flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+    
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    
+    publishing:
+      email:
+        recipients:
+          - newshellweb@gmail.com
+        notify:
+          success: true
+          failure: true
