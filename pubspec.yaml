@@ -16,8 +16,8 @@ dependencies:
   # Connectivity check
   connectivity_plus: ^5.0.2
   
-  # Google Mobile Ads (AdMob)
-  google_mobile_ads: ^3.1.0
+  # Google Mobile Ads (AdMob) - version compatible with Firebase 11.x
+  google_mobile_ads: ^5.2.0
   
   # Firebase for push notifications - using 15.x which has modular headers fix built-in
   firebase_core: ^3.8.0
