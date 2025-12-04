@@ -37,22 +37,20 @@ workflows:
   # ============================================
   # iOS Release Build (IPA para dispositivos reales)
   # ============================================
-  ios-release:
-    name: iOS Release Build (IPA)
+  ios-appstore:
+    name: iOS App Store Build
     instance_type: mac_mini_m1
     max_build_duration: 90
     integrations:
-      app_store_connect: Soundfly iOS  # Nombre de tu integración en Codemagic
+      app_store_connect: Soundfly
     
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
       ios_signing:
-        distribution_type: app_store  # Cambiar a 'ad_hoc' para testing o 'app_store' para publicar
-        bundle_identifier: com.scriptwriter.soundflyios
-      vars:
-        APP_STORE_APPLE_ID: 123456789  # Tu Apple ID de la app (cambiar después de crear en App Store Connect)
+        distribution_type: app_store
+        bundle_identifier: com.soundfly.music
     
     scripts:
       - name: Get Flutter packages
@@ -88,10 +86,9 @@ workflows:
         notify:
           success: true
           failure: true
-      # Descomentar para publicar automáticamente en App Store Connect:
-      # app_store_connect:
-      #   auth: integration
-      #   submit_to_testflight: true
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
 
   # ============================================
   # iOS Ad-Hoc Build (IPA para testing en BrowserStack dispositivos reales)
@@ -101,7 +98,7 @@ workflows:
     instance_type: mac_mini_m1
     max_build_duration: 90
     integrations:
-      app_store_connect: Soundfly iOS
+      app_store_connect: Soundfly
     
     environment:
       flutter: stable
@@ -109,7 +106,7 @@ workflows:
       cocoapods: default
       ios_signing:
         distribution_type: ad_hoc
-        bundle_identifier: com.scriptwriter.soundflyios
+        bundle_identifier: com.soundfly.music
     
     scripts:
       - name: Get Flutter packages
