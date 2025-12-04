@@ -3,16 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
 import '../services/admob_service.dart';
+import '../services/audio_background_service.dart';
 import 'no_internet_screen.dart';
 
 /// Home Screen with WebView
 /// 
 /// Displays the Soundfly web application in a WebView.
-/// Handles connectivity, back navigation, and AdMob integration.
+/// Handles connectivity, back navigation, AdMob integration,
+/// and background audio playback.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -20,7 +23,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late WebViewController _webViewController;
   bool _isLoading = true;
   bool _hasError = false;
@@ -32,8 +35,43 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeWebView();
     _initializeConnectivity();
+    _enableWakelock();
+  }
+  
+  /// Enable wakelock to prevent screen from sleeping during music playback
+  void _enableWakelock() {
+    WakelockPlus.enable();
+  }
+  
+  /// Handle app lifecycle changes for background audio
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    switch (state) {
+      case AppLifecycleState.paused:
+        // App went to background - keep audio session active
+        debugPrint('App paused - keeping audio session active for background playback');
+        AudioBackgroundService.activate();
+        break;
+      case AppLifecycleState.resumed:
+        // App came back to foreground
+        debugPrint('App resumed');
+        AudioBackgroundService.activate();
+        break;
+      case AppLifecycleState.inactive:
+        // App is inactive (transitioning)
+        break;
+      case AppLifecycleState.detached:
+        // App is being terminated
+        break;
+      case AppLifecycleState.hidden:
+        // App is hidden
+        break;
+    }
   }
 
   void _initializeWebView() {
@@ -169,7 +207,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectivitySubscription?.cancel();
+    WakelockPlus.disable();
     super.dispose();
   }
 

@@ -5,6 +5,7 @@ import 'config/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'services/admob_service.dart';
 import 'services/push_notification_service.dart';
+import 'services/audio_background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,9 @@ void main() async {
   if (AppConfig.fullscreenEnabled) {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
+  
+  // Initialize audio session for background playback
+  await AudioBackgroundService.initialize();
   
   // Initialize AdMob if enabled
   if (AppConfig.admobEnabled) {

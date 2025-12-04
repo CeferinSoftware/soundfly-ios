@@ -37,6 +37,12 @@ dependencies:
   
   # Path provider for file operations
   path_provider: ^2.1.2
+  
+  # Audio session for background audio playback
+  audio_session: ^0.1.18
+  
+  # Wakelock to prevent screen from sleeping during playback
+  wakelock_plus: ^1.1.4
 
 dev_dependencies:
   flutter_test:
