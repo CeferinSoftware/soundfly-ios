@@ -88,6 +88,22 @@ workflows:
           echo "App icons generated successfully"
           ls -la "$ICON_DIR"
       
+      - name: Add CFBundleIconName to Info.plist source
+        script: |
+          # Ensure CFBundleIconName is in the source Info.plist BEFORE any build
+          INFO_PLIST="ios/Runner/Info.plist"
+          
+          echo "Current Info.plist content for CFBundleIconName:"
+          grep -A1 "CFBundleIconName" "$INFO_PLIST" || echo "Not found"
+          
+          # Verify it's there
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST" 2>/dev/null; then
+            echo "CFBundleIconName exists: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' $INFO_PLIST)"
+          else
+            echo "Adding CFBundleIconName..."
+            /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$INFO_PLIST"
+          fi
+      
       - name: Clean and install CocoaPods
         script: |
           cd ios
@@ -104,51 +120,105 @@ workflows:
       
       - name: Build iOS Release IPA
         script: |
-          # Step 1: Build iOS without codesign first
-          flutter build ios --release --no-codesign
+          # Use standard flutter build ipa
+          flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
           
-          # Step 2: Ensure CFBundleIconName is in the built app's Info.plist
-          APP_PATH="build/ios/iphoneos/Runner.app"
-          APP_INFO_PLIST="$APP_PATH/Info.plist"
+          echo "Build complete. Checking IPA..."
+          ls -la build/ios/ipa/
+      
+      - name: Fix CFBundleIconName in IPA and Re-sign
+        script: |
+          set -e
           
-          echo "Checking $APP_INFO_PLIST for CFBundleIconName..."
+          # Find the IPA
+          IPA_FILE=$(find build/ios/ipa -name "*.ipa" | head -1)
+          echo "Processing IPA: $IPA_FILE"
           
-          if [ -f "$APP_INFO_PLIST" ]; then
-            if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO_PLIST" 2>/dev/null; then
-              echo "CFBundleIconName not found, adding it..."
-              /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$APP_INFO_PLIST"
-            else
-              echo "CFBundleIconName already present:"
-              /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO_PLIST"
-            fi
+          # Create working directory
+          WORK_DIR="/tmp/ipa_fix"
+          rm -rf "$WORK_DIR"
+          mkdir -p "$WORK_DIR"
+          
+          # Extract IPA
+          unzip -q "$IPA_FILE" -d "$WORK_DIR"
+          
+          # Find the .app bundle
+          APP_PATH=$(find "$WORK_DIR/Payload" -name "*.app" -type d | head -1)
+          APP_INFO="$APP_PATH/Info.plist"
+          
+          echo "App bundle: $APP_PATH"
+          echo "Info.plist: $APP_INFO"
+          
+          # Check current CFBundleIconName
+          echo "Current CFBundleIconName:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO" 2>/dev/null || echo "MISSING!"
+          
+          # Add CFBundleIconName if missing
+          if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO" 2>/dev/null; then
+            echo "Adding CFBundleIconName to Info.plist..."
+            /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$APP_INFO"
+            echo "Added successfully!"
           fi
           
-          # Step 3: Build IPA using xcode-project from Codemagic CLI
-          cd ios
-          xcode-project build-ipa \
-            --workspace Runner.xcworkspace \
-            --scheme Runner \
-            --archive-flags="-destination 'generic/platform=iOS'"
+          # Verify
+          echo "Verified CFBundleIconName:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO"
           
-          # Move IPA to expected location
-          mkdir -p $CM_BUILD_DIR/build/ios/ipa
-          mv build/ios/ipa/*.ipa $CM_BUILD_DIR/build/ios/ipa/ 2>/dev/null || true
+          # Get signing identity and provisioning profile
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Signing identity: $IDENTITY"
+          
+          # Find provisioning profile
+          PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -1)
+          echo "Provisioning profile: $PROFILE_PATH"
+          
+          # Remove old signature
+          rm -rf "$APP_PATH/_CodeSignature"
+          
+          # Re-sign the app with the correct entitlements
+          # First, extract entitlements from the profile
+          security cms -D -i "$PROFILE_PATH" > /tmp/profile.plist
+          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.plist > /tmp/entitlements.plist
+          
+          echo "Entitlements:"
+          cat /tmp/entitlements.plist
+          
+          # Re-sign frameworks first (if any)
+          if [ -d "$APP_PATH/Frameworks" ]; then
+            for framework in "$APP_PATH/Frameworks"/*; do
+              if [ -d "$framework" ]; then
+                echo "Signing framework: $framework"
+                codesign --force --sign "$IDENTITY" "$framework"
+              fi
+            done
+          fi
+          
+          # Re-sign the main app
+          echo "Re-signing app..."
+          codesign --force --sign "$IDENTITY" --entitlements /tmp/entitlements.plist "$APP_PATH"
+          
+          # Verify signature
+          echo "Verifying signature..."
+          codesign --verify --deep --strict "$APP_PATH"
+          
+          # Repack IPA
+          echo "Repacking IPA..."
+          cd "$WORK_DIR"
+          zip -qr "$CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa" Payload
+          
+          echo "Fixed IPA created at: $CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa"
           
           # Final verification
-          IPA_FILE=$(find $CM_BUILD_DIR/build/ios/ipa -name "*.ipa" | head -1)
-          if [ -n "$IPA_FILE" ]; then
-            echo "IPA built: $IPA_FILE"
-            mkdir -p /tmp/ipa_verify
-            unzip -q "$IPA_FILE" -d /tmp/ipa_verify
-            echo "Verifying CFBundleIconName in final IPA..."
-            /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/ipa_verify/Payload/*.app/Info.plist || echo "WARNING: CFBundleIconName still missing"
-          fi
-          
-          ls -la $CM_BUILD_DIR/build/ios/ipa/
+          echo "Final verification of IPA..."
+          rm -rf /tmp/final_check
+          mkdir -p /tmp/final_check
+          unzip -q "$CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa" -d /tmp/final_check
+          echo "CFBundleIconName in final IPA:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/final_check/Payload/*.app/Info.plist
       
       - name: Upload to App Store Connect
         script: |
-          APP_FILE=$(find build/ios/ipa -name "*.ipa" | head -1)
+          APP_FILE="$CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa"
           echo "Uploading $APP_FILE to App Store Connect..."
           app-store-connect publish \
             --path "$APP_FILE" \
