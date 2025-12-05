@@ -11,6 +11,11 @@ import WebKit
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     
+    // Register native audio player plugin
+    if let registrar = self.registrar(forPlugin: "NativeAudioPlayerPlugin") {
+      NativeAudioPlayerPlugin.register(with: registrar)
+    }
+    
     // Configure AVAudioSession for background audio playback
     configureAudioSession()
     
@@ -20,26 +25,19 @@ import WebKit
   private func configureAudioSession() {
     do {
       let audioSession = AVAudioSession.sharedInstance()
-      
-      // Set category for playback - this is the key for background audio
       try audioSession.setCategory(
         .playback,
         mode: .default,
         options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
       )
-      
-      // Activate the audio session
       try audioSession.setActive(true)
-      
       print("Audio session configured successfully for background playback")
     } catch {
       print("Failed to configure audio session: \(error.localizedDescription)")
     }
   }
   
-  // CRITICAL: Keep audio playing when app goes to background
   override func applicationDidEnterBackground(_ application: UIApplication) {
-    // Re-activate audio session when entering background
     do {
       try AVAudioSession.sharedInstance().setActive(true)
       print("Audio session kept active in background")
@@ -50,7 +48,6 @@ import WebKit
   }
   
   override func applicationWillEnterForeground(_ application: UIApplication) {
-    // Ensure audio session is active when coming back
     do {
       try AVAudioSession.sharedInstance().setActive(true)
     } catch {

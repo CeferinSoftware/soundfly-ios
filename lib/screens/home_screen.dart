@@ -9,12 +9,13 @@ import '../config/app_strings.dart';
 import '../config/app_theme.dart';
 import '../services/admob_service.dart';
 import '../services/audio_background_service.dart';
+import '../services/native_audio_player.dart';
 import 'no_internet_screen.dart';
 
 /// Home Screen with InAppWebView
 /// 
 /// Displays the Soundfly web application in a WebView with full
-/// audio/video support for iOS.
+/// audio/video support for iOS using native audio player for background playback.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -85,6 +86,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _initializeConnectivity();
     _enableWakelock();
     AudioBackgroundService.initialize();
+    NativeAudioPlayer.initialize();
   }
   
   void _enableWakelock() {
@@ -259,6 +261,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 onWebViewCreated: (controller) {
                   _webViewController = controller;
                   debugPrint('WebView created');
+                  
+                  // Add JavaScript handler for native audio player
+                  controller.addJavaScriptHandler(
+                    handlerName: 'nativeAudio',
+                    callback: (args) {
+                      if (args.isEmpty) return;
+                      final command = args[0] as String;
+                      
+                      switch (command) {
+                        case 'play':
+                          if (args.length > 1) {
+                            final url = args[1] as String;
+                            NativeAudioPlayer.play(url);
+                            debugPrint('Native audio play: $url');
+                          }
+                          break;
+                        case 'pause':
+                          NativeAudioPlayer.pause();
+                          break;
+                        case 'resume':
+                          NativeAudioPlayer.resume();
+                          break;
+                        case 'stop':
+                          NativeAudioPlayer.stop();
+                          break;
+                        case 'seek':
+                          if (args.length > 1) {
+                            final position = (args[1] as num).toDouble();
+                            NativeAudioPlayer.seek(position);
+                          }
+                          break;
+                      }
+                    },
+                  );
                 },
                 onLoadStart: (controller, url) {
                   setState(() {
@@ -336,42 +372,107 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
       (function() {
-        // Unlock AudioContext on iOS
-        var AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-          var ctx = new AudioContext();
-          if (ctx.state === 'suspended') {
-            ctx.resume();
+        console.log('Injecting native audio bridge...');
+        
+        // Flag to track if we're using native player
+        window._usingNativePlayer = false;
+        window._currentAudioSrc = null;
+        
+        // Function to send commands to native player
+        function sendToNative(command, args) {
+          if (window.flutter_inappwebview) {
+            window.flutter_inappwebview.callHandler('nativeAudio', command, args);
           }
         }
         
-        // Ensure all audio/video elements have correct attributes
-        document.querySelectorAll('audio, video').forEach(function(el) {
-          el.setAttribute('playsinline', '');
-          el.setAttribute('webkit-playsinline', '');
-        });
+        // Intercept HTMLAudioElement play
+        var originalPlay = HTMLAudioElement.prototype.play;
+        HTMLAudioElement.prototype.play = function() {
+          var audio = this;
+          var src = audio.src || audio.currentSrc;
+          
+          if (src && src.length > 0 && !src.startsWith('blob:')) {
+            console.log('Intercepted audio play: ' + src);
+            window._currentAudioSrc = src;
+            window._usingNativePlayer = true;
+            
+            // Mute the web audio and let native handle it
+            audio.muted = true;
+            audio.volume = 0;
+            
+            // Send to native player
+            sendToNative('play', src);
+            
+            // Return a resolved promise
+            return Promise.resolve();
+          }
+          
+          return originalPlay.call(this);
+        };
+        
+        // Intercept pause
+        var originalPause = HTMLAudioElement.prototype.pause;
+        HTMLAudioElement.prototype.pause = function() {
+          if (window._usingNativePlayer) {
+            console.log('Intercepted audio pause');
+            sendToNative('pause', null);
+          }
+          return originalPause.call(this);
+        };
+        
+        // Monitor for audio elements and intercept their events
+        function setupAudioInterception(audio) {
+          audio.setAttribute('playsinline', '');
+          audio.setAttribute('webkit-playsinline', '');
+          
+          // Listen for src changes
+          var descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+          if (descriptor && descriptor.set) {
+            var originalSetter = descriptor.set;
+            Object.defineProperty(audio, 'src', {
+              set: function(value) {
+                console.log('Audio src set to: ' + value);
+                window._currentAudioSrc = value;
+                originalSetter.call(this, value);
+              },
+              get: function() {
+                return this.getAttribute('src') || '';
+              }
+            });
+          }
+        }
+        
+        // Setup existing audio elements
+        document.querySelectorAll('audio').forEach(setupAudioInterception);
         
         // Monitor for new audio elements
         var observer = new MutationObserver(function(mutations) {
           mutations.forEach(function(mutation) {
             mutation.addedNodes.forEach(function(node) {
               if (node.nodeType === 1) {
-                if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
-                  node.setAttribute('playsinline', '');
-                  node.setAttribute('webkit-playsinline', '');
+                if (node.tagName === 'AUDIO') {
+                  setupAudioInterception(node);
                 }
-                var elements = node.querySelectorAll ? node.querySelectorAll('audio, video') : [];
-                elements.forEach(function(el) {
-                  el.setAttribute('playsinline', '');
-                  el.setAttribute('webkit-playsinline', '');
-                });
+                var audios = node.querySelectorAll ? node.querySelectorAll('audio') : [];
+                audios.forEach(setupAudioInterception);
               }
             });
           });
         });
         observer.observe(document.body, { childList: true, subtree: true });
         
-        console.log('iOS audio fixes injected');
+        // Unlock AudioContext
+        var AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          document.addEventListener('touchstart', function() {
+            var ctx = new AudioContext();
+            if (ctx.state === 'suspended') {
+              ctx.resume();
+            }
+          }, { once: true });
+        }
+        
+        console.log('Native audio bridge injected successfully');
       })();
     ''');
   }
