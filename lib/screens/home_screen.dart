@@ -90,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _webViewController = WebViewController.fromPlatformCreationParams(params);
     
-    // Enable media playback in WebView
+    // Enable media playback and gestures in WebView
     if (_webViewController.platform is WebKitWebViewController) {
       final webKitController = _webViewController.platform as WebKitWebViewController;
       webKitController.setAllowsBackForwardNavigationGestures(true);
@@ -99,9 +99,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _webViewController
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(AppTheme.white)
-      ..setUserAgent(
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-      )
+      ..enableZoom(true)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
@@ -163,19 +161,54 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       document.querySelectorAll('audio, video').forEach(function(el) {
         el.setAttribute('playsinline', '');
         el.setAttribute('webkit-playsinline', '');
-        el.removeAttribute('autoplay');
+        el.crossOrigin = 'anonymous';
       });
       
-      // Override Audio constructor to ensure playsinline
+      // Override Audio constructor to ensure playsinline and crossorigin
       (function() {
         var OriginalAudio = window.Audio;
         window.Audio = function(src) {
           var audio = new OriginalAudio(src);
           audio.setAttribute('playsinline', '');
           audio.setAttribute('webkit-playsinline', '');
+          audio.crossOrigin = 'anonymous';
+          audio.preload = 'auto';
           return audio;
         };
         window.Audio.prototype = OriginalAudio.prototype;
+      })();
+      
+      // Also patch createElement to catch audio elements
+      (function() {
+        var originalCreateElement = document.createElement.bind(document);
+        document.createElement = function(tagName) {
+          var element = originalCreateElement(tagName);
+          if (tagName.toLowerCase() === 'audio' || tagName.toLowerCase() === 'video') {
+            element.setAttribute('playsinline', '');
+            element.setAttribute('webkit-playsinline', '');
+            element.crossOrigin = 'anonymous';
+            element.preload = 'auto';
+          }
+          return element;
+        };
+      })();
+      
+      // Fix for iOS AudioContext
+      (function() {
+        var AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          var originalAudioContext = AudioContext;
+          window.AudioContext = window.webkitAudioContext = function() {
+            var ctx = new originalAudioContext();
+            // Resume context on user interaction
+            document.addEventListener('touchstart', function() {
+              if (ctx.state === 'suspended') {
+                ctx.resume();
+              }
+            }, { once: true });
+            return ctx;
+          };
+        }
       })();
       
       // Monitor for dynamically added audio elements
@@ -185,11 +218,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
               node.setAttribute('playsinline', '');
               node.setAttribute('webkit-playsinline', '');
+              node.crossOrigin = 'anonymous';
             }
             if (node.querySelectorAll) {
               node.querySelectorAll('audio, video').forEach(function(el) {
                 el.setAttribute('playsinline', '');
                 el.setAttribute('webkit-playsinline', '');
+                el.crossOrigin = 'anonymous';
               });
             }
           });
@@ -197,7 +232,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       observer.observe(document.body, { childList: true, subtree: true });
       
-      console.log('iOS audio enhancements injected');
+      // Force unlock audio on first touch
+      document.addEventListener('touchstart', function unlockAudio() {
+        var audio = document.querySelector('audio');
+        if (audio) {
+          audio.play().then(function() {
+            audio.pause();
+            audio.currentTime = 0;
+          }).catch(function() {});
+        }
+        // Also try with a silent buffer
+        try {
+          var ctx = new (window.AudioContext || window.webkitAudioContext)();
+          var buffer = ctx.createBuffer(1, 1, 22050);
+          var source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.start(0);
+          ctx.resume();
+        } catch(e) {}
+        document.removeEventListener('touchstart', unlockAudio);
+      }, { once: true });
+      
+      console.log('iOS audio enhancements injected v2');
     ''');
   }
 
