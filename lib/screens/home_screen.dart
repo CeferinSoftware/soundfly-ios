@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../config/app_config.dart';
@@ -75,7 +77,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _initializeWebView() {
-    _webViewController = WebViewController()
+    // iOS specific configuration for audio and media playback
+    late final PlatformWebViewControllerCreationParams params;
+    if (Platform.isIOS) {
+      params = WebKitWebViewControllerCreationParams(
+        allowsInlineMediaPlayback: true,
+        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+      );
+    } else {
+      params = const PlatformWebViewControllerCreationParams();
+    }
+
+    _webViewController = WebViewController.fromPlatformCreationParams(params)
       ..setJavaScriptMode(
         AppConfig.javascriptEnabled
             ? JavaScriptMode.unrestricted
@@ -99,12 +112,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             });
             _pageLoadCount++;
             _showInterstitialAd();
+            
+            // Inject JavaScript to improve scrolling and audio
+            _injectJavaScript();
           },
           onWebResourceError: (WebResourceError error) {
-            setState(() {
-              _hasError = true;
-              _isLoading = false;
-            });
+            // Only show error for main frame errors
+            if (error.isForMainFrame ?? true) {
+              setState(() {
+                _hasError = true;
+                _isLoading = false;
+              });
+            }
           },
           onNavigationRequest: (NavigationRequest request) {
             // Handle external links
@@ -119,6 +138,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       )
       ..loadRequest(Uri.parse(AppConfig.websiteUrl));
+  }
+
+  /// Inject JavaScript to improve iOS WebView behavior
+  void _injectJavaScript() {
+    _webViewController.runJavaScript('''
+      // Enable smooth scrolling
+      document.body.style.webkitOverflowScrolling = 'touch';
+      document.body.style.overflowY = 'scroll';
+      
+      // Fix viewport for proper scaling
+      var viewport = document.querySelector('meta[name="viewport"]');
+      if (viewport) {
+        viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+      }
+      
+      // Ensure audio elements can play
+      document.querySelectorAll('audio, video').forEach(function(el) {
+        el.setAttribute('playsinline', '');
+        el.setAttribute('webkit-playsinline', '');
+      });
+    ''');
   }
 
   void _initializeConnectivity() {
@@ -240,22 +280,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         body: SafeArea(
           child: Stack(
             children: [
-              // WebView
-              if (AppConfig.pullToRefreshEnabled)
-                RefreshIndicator(
-                  onRefresh: () => _webViewController.reload(),
-                  color: AppTheme.primaryColor,
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    child: SizedBox(
-                      height: MediaQuery.of(context).size.height -
-                          MediaQuery.of(context).padding.top,
-                      child: WebViewWidget(controller: _webViewController),
-                    ),
-                  ),
-                )
-              else
-                WebViewWidget(controller: _webViewController),
+              // WebView - Direct without RefreshIndicator for better scroll
+              WebViewWidget(controller: _webViewController),
               
               // Loading indicator
               if (_isLoading)
