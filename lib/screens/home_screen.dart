@@ -372,110 +372,142 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('=== Soundfly Audio Bridge v2 ===');
+        console.log('=== Soundfly Audio Bridge v3 ===');
         
-        // Store original functions
-        const originalAudioPlay = HTMLAudioElement.prototype.play;
-        const originalAudioPause = HTMLAudioElement.prototype.pause;
+        // Track state
+        window._sfNativeAudioActive = false;
+        window._sfCurrentSrc = null;
+        window._sfAudioElement = null;
         
-        // Track active audio element
-        window._soundflyAudio = null;
-        window._soundflyAudioSrc = null;
-        
-        // Function to extract audio URL
-        function getAudioUrl(audio) {
-          return audio.src || audio.currentSrc || audio.getAttribute('src') || '';
-        }
-        
-        // Function to send to native
+        // Send command to native Flutter
         function sendToNative(action, url) {
-          console.log('Sending to native: ' + action + ' - ' + url);
+          console.log('[SF-Bridge] Sending: ' + action + ' url=' + (url || 'none'));
           if (window.flutter_inappwebview) {
             window.flutter_inappwebview.callHandler('nativeAudio', action, url || '');
           }
         }
         
-        // Override Audio constructor
-        const OriginalAudio = window.Audio;
-        window.Audio = function(src) {
-          console.log('Audio constructor called with: ' + src);
-          const audio = new OriginalAudio(src);
-          setupAudioElement(audio);
-          return audio;
-        };
+        // Check if URL is a valid audio URL
+        function isAudioUrl(url) {
+          if (!url || url.length < 5) return false;
+          if (url.startsWith('blob:') || url.startsWith('data:')) return false;
+          // Check for common audio extensions or storage paths
+          return url.includes('.mp3') || 
+                 url.includes('.m4a') || 
+                 url.includes('.wav') ||
+                 url.includes('.ogg') ||
+                 url.includes('.flac') ||
+                 url.includes('/storage/') ||
+                 url.includes('track_media') ||
+                 url.includes('/stream');
+        }
         
-        // Setup interception on audio element
-        function setupAudioElement(audio) {
-          console.log('Setting up audio element');
+        // Hook into all audio elements - both existing and new
+        function hookAudioElement(audio) {
+          if (audio._sfHooked) return;
+          audio._sfHooked = true;
+          
+          console.log('[SF-Bridge] Hooking audio element');
+          
+          // Store original methods
+          const origPlay = audio.play.bind(audio);
+          const origPause = audio.pause.bind(audio);
           
           // Override play
           audio.play = function() {
-            const url = getAudioUrl(this);
-            console.log('Audio.play() called, URL: ' + url);
+            const src = this.src || this.currentSrc;
+            console.log('[SF-Bridge] play() called, src=' + src);
             
-            if (url && url.length > 5 && !url.startsWith('blob:') && !url.startsWith('data:')) {
-              window._soundflyAudio = this;
-              window._soundflyAudioSrc = url;
+            if (isAudioUrl(src)) {
+              window._sfNativeAudioActive = true;
+              window._sfCurrentSrc = src;
+              window._sfAudioElement = this;
               
-              // Mute web audio, native will play
+              // Mute web audio - native player handles sound
               this.muted = true;
               this.volume = 0;
               
-              // Send to native player
-              sendToNative('play', url);
+              // Tell native to play
+              sendToNative('play', src);
               
-              // Call original to keep web player state in sync
-              return originalAudioPlay.call(this).catch(function(e) {
-                console.log('Web audio play error (expected): ' + e);
+              // Still call original to keep UI state synced
+              return origPlay().catch(function(e) {
+                console.log('[SF-Bridge] Web play error (OK): ' + e.message);
                 return Promise.resolve();
               });
             }
-            return originalAudioPlay.call(this);
+            return origPlay();
           };
           
           // Override pause
           audio.pause = function() {
-            console.log('Audio.pause() called');
-            if (window._soundflyAudio === this) {
+            console.log('[SF-Bridge] pause() called');
+            if (window._sfNativeAudioActive && window._sfAudioElement === this) {
               sendToNative('pause', '');
             }
-            return originalAudioPause.call(this);
+            return origPause();
           };
           
-          // Monitor src changes
-          let currentSrc = '';
-          Object.defineProperty(audio, 'src', {
-            get: function() {
-              return currentSrc;
-            },
-            set: function(value) {
-              console.log('Audio src set: ' + value);
-              currentSrc = value;
-              this.setAttribute('src', value);
-              if (value && value.length > 5) {
-                window._soundflyAudioSrc = value;
+          // Watch for src attribute changes
+          const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+          if (srcDescriptor) {
+            Object.defineProperty(audio, 'src', {
+              get: function() {
+                return srcDescriptor.get.call(this);
+              },
+              set: function(value) {
+                console.log('[SF-Bridge] src changed to: ' + value);
+                srcDescriptor.set.call(this, value);
+                if (isAudioUrl(value)) {
+                  window._sfCurrentSrc = value;
+                }
               }
+            });
+          }
+          
+          // Listen for play/pause events as backup
+          audio.addEventListener('play', function() {
+            const src = this.src || this.currentSrc;
+            console.log('[SF-Bridge] play event, src=' + src);
+            if (isAudioUrl(src) && !window._sfNativeAudioActive) {
+              window._sfNativeAudioActive = true;
+              window._sfCurrentSrc = src;
+              window._sfAudioElement = this;
+              this.muted = true;
+              this.volume = 0;
+              sendToNative('play', src);
+            }
+          });
+          
+          audio.addEventListener('pause', function() {
+            console.log('[SF-Bridge] pause event');
+            if (window._sfNativeAudioActive && window._sfAudioElement === this) {
+              sendToNative('pause', '');
+            }
+          });
+          
+          audio.addEventListener('ended', function() {
+            console.log('[SF-Bridge] ended event');
+            if (window._sfNativeAudioActive) {
+              sendToNative('stop', '');
+              window._sfNativeAudioActive = false;
             }
           });
         }
         
-        // Setup existing audio elements
-        document.querySelectorAll('audio').forEach(function(audio) {
-          setupAudioElement(audio);
-        });
+        // Hook existing audio elements
+        document.querySelectorAll('audio').forEach(hookAudioElement);
         
-        // Watch for new audio elements
+        // Watch for dynamically created audio elements
         const observer = new MutationObserver(function(mutations) {
           mutations.forEach(function(mutation) {
             mutation.addedNodes.forEach(function(node) {
               if (node.nodeType === 1) {
                 if (node.tagName === 'AUDIO') {
-                  setupAudioElement(node);
+                  hookAudioElement(node);
                 }
                 if (node.querySelectorAll) {
-                  node.querySelectorAll('audio').forEach(function(audio) {
-                    setupAudioElement(audio);
-                  });
+                  node.querySelectorAll('audio').forEach(hookAudioElement);
                 }
               }
             });
@@ -487,27 +519,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           subtree: true
         });
         
-        // Also intercept XMLHttpRequest to catch audio file requests
-        const originalXHROpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url) {
-          if (url && (url.includes('.mp3') || url.includes('.m4a') || url.includes('.wav') || url.includes('.ogg') || url.includes('/audio/') || url.includes('/stream/'))) {
-            console.log('XHR audio request detected: ' + url);
-            window._lastAudioUrl = url;
-          }
-          return originalXHROpen.apply(this, arguments);
+        // Also override Audio constructor for dynamically created audio
+        const OriginalAudio = window.Audio;
+        window.Audio = function(src) {
+          console.log('[SF-Bridge] new Audio(' + src + ')');
+          const audio = new OriginalAudio(src);
+          hookAudioElement(audio);
+          return audio;
         };
+        window.Audio.prototype = OriginalAudio.prototype;
         
-        // Intercept fetch for audio
-        const originalFetch = window.fetch;
-        window.fetch = function(url, options) {
-          if (url && typeof url === 'string' && (url.includes('.mp3') || url.includes('.m4a') || url.includes('.wav') || url.includes('.ogg') || url.includes('/audio/') || url.includes('/stream/'))) {
-            console.log('Fetch audio request detected: ' + url);
-            window._lastAudioUrl = url;
-          }
-          return originalFetch.apply(this, arguments);
-        };
-        
-        console.log('Audio bridge installed successfully');
+        console.log('[SF-Bridge] Audio bridge v3 installed');
       })();
     ''');
   }
