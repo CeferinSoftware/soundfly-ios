@@ -57,13 +57,52 @@ workflows:
         script: |
           flutter pub get
       
-      - name: Generate App Icons with flutter_launcher_icons
+      - name: Generate App Icons with sips
         script: |
-          # Use flutter_launcher_icons to properly generate all icons
-          dart run flutter_launcher_icons
+          # Source logo - must be at least 1024x1024
+          SOURCE_ICON="assets/images/logo.png"
+          ICON_DIR="ios/Runner/Assets.xcassets/AppIcon.appiconset"
           
-          echo "App icons generated with flutter_launcher_icons"
-          ls -la ios/Runner/Assets.xcassets/AppIcon.appiconset/
+          echo "Source icon:"
+          file "$SOURCE_ICON"
+          
+          # Create a 1024x1024 base icon first
+          sips -z 1024 1024 "$SOURCE_ICON" --out "/tmp/icon_1024.png"
+          
+          # Generate all required icon sizes from the 1024 base
+          # iPhone icons (required)
+          sips -z 40 40 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-20x20@2x.png"
+          sips -z 60 60 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-20x20@3x.png"
+          sips -z 58 58 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-29x29@2x.png"
+          sips -z 87 87 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-29x29@3x.png"
+          sips -z 80 80 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-40x40@2x.png"
+          sips -z 120 120 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-40x40@3x.png"
+          sips -z 120 120 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-60x60@2x.png"
+          sips -z 180 180 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-60x60@3x.png"
+          
+          # iPad icons (required)
+          sips -z 20 20 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-20x20@1x.png"
+          sips -z 29 29 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-29x29@1x.png"
+          sips -z 40 40 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-40x40@1x.png"
+          sips -z 76 76 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-76x76@1x.png"
+          sips -z 152 152 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-76x76@2x.png"
+          sips -z 167 167 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-83.5x83.5@2x.png"
+          
+          # App Store icon (1024x1024)
+          cp "/tmp/icon_1024.png" "$ICON_DIR/Icon-App-1024x1024@1x.png"
+          
+          echo "Generated icons:"
+          ls -la "$ICON_DIR"
+          
+          # Verify all icons exist
+          echo "Verifying icons..."
+          for icon in Icon-App-20x20@2x.png Icon-App-20x20@3x.png Icon-App-60x60@2x.png Icon-App-60x60@3x.png Icon-App-76x76@2x.png Icon-App-83.5x83.5@2x.png Icon-App-1024x1024@1x.png; do
+            if [ -f "$ICON_DIR/$icon" ]; then
+              echo "✓ $icon exists"
+            else
+              echo "✗ $icon MISSING!"
+            fi
+          done
       
       - name: Clean and install CocoaPods
         script: |
@@ -167,37 +206,29 @@ workflows:
           # Verify
           codesign --verify --deep --strict "$ARCHIVE_APP" && echo "Signature valid" || echo "Signature INVALID"
       
-      - name: Export IPA from Archive
+      - name: Export IPA manually (skip xcodebuild exportArchive)
         script: |
-          # Create export options plist
-          cat > /tmp/ExportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>destination</key>
-              <string>upload</string>
-              <key>signingStyle</key>
-              <string>automatic</string>
-              <key>uploadSymbols</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          # Instead of using xcodebuild -exportArchive which may regenerate things,
+          # we'll create the IPA manually from the modified archive
           
-          # Export IPA from archive
+          ARCHIVE_APP="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          
+          # Verify CFBundleIconName is still in the archive before packaging
+          echo "Verifying CFBundleIconName before packaging:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$ARCHIVE_APP/Info.plist"
+          
+          # Create Payload directory
+          mkdir -p /tmp/ipa_build/Payload
+          
+          # Copy the signed app to Payload
+          cp -R "$ARCHIVE_APP" /tmp/ipa_build/Payload/
+          
+          # Create IPA by zipping
           mkdir -p $CM_BUILD_DIR/build/ios/ipa
-          xcodebuild -exportArchive \
-            -archivePath $CM_BUILD_DIR/build/ios/archive/Runner.xcarchive \
-            -exportPath $CM_BUILD_DIR/build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist
+          cd /tmp/ipa_build
+          zip -qr $CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa Payload
           
-          # Rename to Soundfly.ipa
-          mv $CM_BUILD_DIR/build/ios/ipa/Runner.ipa $CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa 2>/dev/null || true
-          
-          echo "IPA exported:"
+          echo "IPA created manually:"
           ls -la $CM_BUILD_DIR/build/ios/ipa/
       
       - name: Verify CFBundleIconName in IPA
