@@ -364,11 +364,57 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // Error view
               if (_hasError && !_isLoading)
                 _buildErrorView(),
+              
+              // DEBUG: Native audio status indicator and test button
+              Positioned(
+                bottom: 100,
+                right: 16,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Status indicator
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: NativeAudioPlayer.isPlaying ? Colors.green : Colors.grey,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        NativeAudioPlayer.isPlaying ? '🎵 Playing' : '⏸️ Stopped',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Test play button
+                    FloatingActionButton.small(
+                      heroTag: 'testAudio',
+                      backgroundColor: Colors.purple,
+                      onPressed: _testNativeAudio,
+                      child: const Icon(Icons.music_note, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+  
+  /// Test native audio player with a sample MP3
+  Future<void> _testNativeAudio() async {
+    // Using a public domain audio file for testing
+    const testUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+    
+    if (NativeAudioPlayer.isPlaying) {
+      await NativeAudioPlayer.pause();
+      _showSnackBar('Native audio paused', Colors.orange);
+    } else {
+      await NativeAudioPlayer.play(testUrl);
+      _showSnackBar('Playing test audio - minimize app to test background!', Colors.green);
+    }
+    setState(() {}); // Refresh UI
   }
 
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
