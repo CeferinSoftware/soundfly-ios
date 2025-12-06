@@ -474,36 +474,54 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   
   /// Play YouTube audio using extraction service
   String? _currentYouTubeVideoId;
+  bool _isExtracting = false;
   
   Future<void> _playYouTubeAudio(String videoId) async {
     if (videoId.isEmpty) return;
     
-    // Don't re-extract if same video
+    // Don't re-extract if already extracting or same video
+    if (_isExtracting) {
+      debugPrint('Already extracting, skipping');
+      return;
+    }
+    
     if (videoId == _currentYouTubeVideoId && NativeAudioPlayer.isPlaying) {
       debugPrint('Already playing this video: $videoId');
       return;
     }
     
+    _isExtracting = true;
     _currentYouTubeVideoId = videoId;
-    debugPrint('Extracting audio for YouTube video: $videoId');
+    
+    debugPrint('=== EXTRACTING YOUTUBE AUDIO ===');
+    debugPrint('Video ID: $videoId');
+    
+    _showSnackBar('Extracting audio...', Colors.orange);
     
     try {
-      // Use Piped API (privacy-friendly YouTube frontend) to get audio stream
-      // This is a public API that extracts YouTube audio URLs
+      // Use Piped API to get audio stream
       final pipedInstances = [
         'pipedapi.kavin.rocks',
         'pipedapi.adminforge.de', 
         'api.piped.yt',
+        'pipedapi.moomoo.me',
       ];
       
       String? audioUrl;
       
       for (final instance in pipedInstances) {
         try {
-          final uri = Uri.parse('https://$instance/streams/$videoId');
-          debugPrint('Trying Piped instance: $instance');
+          final url = 'https://$instance/streams/$videoId';
+          debugPrint('Trying: $url');
           
-          final response = await HttpClient().getUrl(uri).then((req) => req.close());
+          final client = HttpClient();
+          client.connectionTimeout = const Duration(seconds: 10);
+          
+          final request = await client.getUrl(Uri.parse(url));
+          request.headers.set('User-Agent', 'Mozilla/5.0');
+          final response = await request.close();
+          
+          debugPrint('Response status: ${response.statusCode}');
           
           if (response.statusCode == 200) {
             final body = await response.transform(const Utf8Decoder()).join();
@@ -511,104 +529,105 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             
             // Get audio streams
             final audioStreams = json['audioStreams'] as List?;
+            debugPrint('Audio streams found: ${audioStreams?.length ?? 0}');
+            
             if (audioStreams != null && audioStreams.isNotEmpty) {
-              // Find best quality audio stream (prefer m4a/mp4 for iOS compatibility)
+              // Find best quality m4a stream (iOS compatible)
               for (final stream in audioStreams) {
-                final mimeType = stream['mimeType'] as String? ?? '';
-                final url = stream['url'] as String?;
+                final mimeType = (stream['mimeType'] as String?) ?? '';
+                final streamUrl = stream['url'] as String?;
+                final quality = stream['quality'] as String? ?? '';
                 
-                if (url != null && (mimeType.contains('mp4') || mimeType.contains('m4a'))) {
-                  audioUrl = url;
-                  debugPrint('Found audio stream: $mimeType');
+                debugPrint('Stream: $quality - $mimeType');
+                
+                if (streamUrl != null && (mimeType.contains('mp4') || mimeType.contains('m4a') || mimeType.contains('audio'))) {
+                  audioUrl = streamUrl;
+                  debugPrint('Selected stream: $quality');
                   break;
                 }
               }
               
-              // If no m4a, use first audio stream
-              if (audioUrl == null && audioStreams.isNotEmpty) {
+              // Fallback to first audio stream
+              if (audioUrl == null) {
                 audioUrl = audioStreams.first['url'] as String?;
+                debugPrint('Using first available stream');
               }
             }
             
             if (audioUrl != null) {
-              debugPrint('Got audio URL from $instance');
+              debugPrint('Got audio URL! Length: ${audioUrl.length}');
+              client.close();
               break;
             }
           }
+          
+          client.close();
         } catch (e) {
-          debugPrint('Piped instance $instance failed: $e');
+          debugPrint('Instance $instance failed: $e');
         }
       }
       
-      if (audioUrl != null) {
-        // Play the extracted audio
+      _isExtracting = false;
+      
+      if (audioUrl != null && audioUrl.isNotEmpty) {
+        debugPrint('=== PLAYING AUDIO ===');
+        debugPrint('URL: ${audioUrl.substring(0, 100)}...');
+        
         await NativeAudioPlayer.play(audioUrl);
-        _showSnackBar('🎵 Playing in background mode', Colors.green);
+        _showSnackBar('🎵 Background audio ready!', Colors.green);
         setState(() {});
       } else {
-        debugPrint('Could not extract audio URL for video: $videoId');
+        debugPrint('Failed to extract audio URL');
         _showSnackBar('Could not extract audio', Colors.red);
       }
     } catch (e) {
+      _isExtracting = false;
       debugPrint('Error extracting YouTube audio: $e');
-      _showSnackBar('Audio extraction failed', Colors.red);
+      _showSnackBar('Extraction failed: $e', Colors.red);
     }
   }
 
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('=== Soundfly Audio Bridge v9 - YouTube Audio Extraction ===');
+        console.log('=== Soundfly Audio Bridge v10 - Immediate YouTube Extraction ===');
         
         window._sfBridge = {
           active: false,
           currentVideoId: null,
-          lastVideoId: null
+          extracting: false
         };
         
         // Show notification
-        function showNotification(msg, isSuccess) {
+        function showNotification(msg, color) {
           console.log('[SF-Native] ' + msg);
           var toast = document.createElement('div');
-          toast.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:' + (isSuccess ? '#0a0' : '#f80') + ';color:#fff;padding:10px 20px;border-radius:20px;z-index:99999;font-size:12px;max-width:90%;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.5);font-weight:bold;';
+          toast.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:' + (color || '#333') + ';color:#fff;padding:10px 20px;border-radius:20px;z-index:99999;font-size:12px;max-width:90%;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.5);font-weight:bold;';
           toast.textContent = msg;
           document.body.appendChild(toast);
           setTimeout(function() { toast.remove(); }, 4000);
         }
         
-        // Send YouTube video ID to Flutter for native playback
-        function sendYouTubeToFlutter(videoId, action) {
-          if (!videoId) return;
-          console.log('[SF-Native] Sending YouTube: ' + action + ' -> ' + videoId);
+        // Send YouTube video ID to Flutter - IMMEDIATELY extract and play
+        function playYouTubeNatively(videoId) {
+          if (!videoId || window._sfBridge.extracting) return;
+          if (videoId === window._sfBridge.currentVideoId && window._sfBridge.active) return;
+          
+          window._sfBridge.extracting = true;
+          window._sfBridge.currentVideoId = videoId;
+          
+          showNotification('🎬 Extracting: ' + videoId, '#f80');
+          console.log('[SF-Native] Extracting YouTube: ' + videoId);
           
           if (window.flutter_inappwebview) {
-            window.flutter_inappwebview.callHandler('youtubeAudio', action, videoId);
+            window.flutter_inappwebview.callHandler('youtubeAudio', 'play', videoId);
           }
+          
+          // Reset extracting flag after a delay
+          setTimeout(function() { window._sfBridge.extracting = false; }, 3000);
         }
         
-        // Extract video ID from various YouTube URL formats
-        function extractVideoId(url) {
-          if (!url) return null;
-          
-          // youtube.com/watch?v=VIDEO_ID
-          var match = url.match(/[?&]v=([^&]+)/);
-          if (match) return match[1];
-          
-          // youtu.be/VIDEO_ID
-          match = url.match(/youtu\\.be\\/([^?&]+)/);
-          if (match) return match[1];
-          
-          // youtube.com/embed/VIDEO_ID
-          match = url.match(/\\/embed\\/([^?&]+)/);
-          if (match) return match[1];
-          
-          // Just the ID (11 chars)
-          if (/^[a-zA-Z0-9_-]{11}\$/.test(url)) return url;
-          
-          return null;
-        }
-        
-        // ========== INTERCEPT XHR TO CATCH YOUTUBE SEARCH RESULTS ==========
+        // ========== INTERCEPT XHR TO CATCH YOUTUBE VIDEO IDs ==========
         var origXHROpen = XMLHttpRequest.prototype.open;
         var origXHRSend = XMLHttpRequest.prototype.send;
         
@@ -621,23 +640,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           var xhr = this;
           var url = this._sfUrl || '';
           
-          // Intercept search/audio API responses to get YouTube video IDs
-          if (url.includes('/search/audio') || url.includes('api/v1/search')) {
+          // Intercept search/audio API to get YouTube video ID
+          if (url.includes('search/audio')) {
+            showNotification('🔍 Searching audio...', '#666');
+            
             xhr.addEventListener('load', function() {
               try {
                 var response = JSON.parse(xhr.responseText);
+                console.log('[SF-Native] API Response: ' + JSON.stringify(response).substring(0, 200));
+                
                 if (response.results && response.results.length > 0) {
                   var videoId = response.results[0].id;
-                  console.log('[SF-Native] YouTube video ID from API: ' + videoId);
-                  showNotification('🎬 YouTube ID: ' + videoId, true);
+                  showNotification('✅ Found: ' + videoId, '#0a0');
                   
-                  window._sfBridge.currentVideoId = videoId;
-                  
-                  // Send to Flutter to prepare native playback
-                  sendYouTubeToFlutter(videoId, 'prepare');
+                  // Start native playback immediately!
+                  playYouTubeNatively(videoId);
+                } else {
+                  showNotification('❌ No results', '#f00');
                 }
               } catch(e) {
-                console.log('[SF-Native] XHR parse error: ' + e);
+                showNotification('❌ Parse error', '#f00');
+                console.log('[SF-Native] Error: ' + e);
               }
             });
           }
@@ -645,104 +668,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           return origXHRSend.apply(this, arguments);
         };
         
-        // ========== INTERCEPT YOUTUBE IFRAME ==========
-        var origCreateElement = document.createElement.bind(document);
-        document.createElement = function(tag) {
-          var el = origCreateElement(tag);
+        // Also intercept fetch
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+          var url = typeof input === 'string' ? input : (input.url || '');
           
-          if (tag.toLowerCase() === 'iframe') {
-            // Watch for src changes on iframes
-            var origSetAttr = el.setAttribute.bind(el);
-            el.setAttribute = function(name, value) {
-              if (name === 'src' && value && value.includes('youtube')) {
-                var videoId = extractVideoId(value);
-                if (videoId) {
-                  console.log('[SF-Native] YouTube iframe src: ' + videoId);
-                  window._sfBridge.currentVideoId = videoId;
-                }
-              }
-              return origSetAttr(name, value);
-            };
+          if (url.includes('search/audio')) {
+            showNotification('🔍 Fetching audio...', '#666');
             
-            // Also watch the src property
-            var srcDescriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
-            if (srcDescriptor) {
-              Object.defineProperty(el, 'src', {
-                set: function(value) {
-                  if (value && value.includes('youtube')) {
-                    var videoId = extractVideoId(value);
-                    if (videoId) {
-                      console.log('[SF-Native] YouTube iframe src property: ' + videoId);
-                      window._sfBridge.currentVideoId = videoId;
-                    }
-                  }
-                  srcDescriptor.set.call(this, value);
-                },
-                get: function() {
-                  return srcDescriptor.get.call(this);
+            return origFetch.apply(this, arguments).then(function(response) {
+              return response.clone().json().then(function(data) {
+                console.log('[SF-Native] Fetch Response: ' + JSON.stringify(data).substring(0, 200));
+                
+                if (data.results && data.results.length > 0) {
+                  var videoId = data.results[0].id;
+                  showNotification('✅ Found: ' + videoId, '#0a0');
+                  playYouTubeNatively(videoId);
                 }
-              });
-            }
+                return response;
+              }).catch(function() { return response; });
+            });
           }
-          return el;
+          
+          return origFetch.apply(this, arguments);
         };
         
-        // ========== DETECT PLAYBACK STATE VIA POSTMESSAGE ==========
-        window.addEventListener('message', function(event) {
-          try {
-            var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-            
-            // YouTube iframe API messages
-            if (data && data.event === 'onStateChange') {
-              var state = data.info;
-              console.log('[SF-Native] YouTube state: ' + state);
-              
-              // States: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
-              if (state === 1 && window._sfBridge.currentVideoId) {
-                // YouTube started playing - tell Flutter to take over
-                if (window._sfBridge.currentVideoId !== window._sfBridge.lastVideoId) {
-                  window._sfBridge.lastVideoId = window._sfBridge.currentVideoId;
-                  showNotification('▶️ Starting native player...', true);
-                  sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'play');
-                }
-              } else if (state === 2) {
-                sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'pause');
-              } else if (state === 0) {
-                sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'ended');
-              }
-            }
-            
-            // Also check for infoDelivery with video data
-            if (data && data.event === 'infoDelivery' && data.info) {
-              if (data.info.videoData && data.info.videoData.video_id) {
-                var videoId = data.info.videoData.video_id;
-                if (videoId !== window._sfBridge.currentVideoId) {
-                  console.log('[SF-Native] Video ID from infoDelivery: ' + videoId);
-                  window._sfBridge.currentVideoId = videoId;
-                }
-              }
-            }
-          } catch(e) {}
-        });
-        
-        // ========== VISIBILITY CHANGE - TRIGGER NATIVE PLAYBACK ==========
-        document.addEventListener('visibilitychange', function() {
-          console.log('[SF-Native] Visibility: ' + document.visibilityState);
-          
-          if (document.visibilityState === 'hidden') {
-            // App going to background - native player should take over
-            if (window._sfBridge.currentVideoId) {
-              showNotification('⏳ Switching to native player...', true);
-              sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'background');
-            }
-          } else if (document.visibilityState === 'visible') {
-            // App back in foreground
-            sendYouTubeToFlutter(window._sfBridge.currentVideoId || '', 'foreground');
-          }
-        });
-        
-        showNotification('Bridge v9 ready!', true);
-        console.log('[SF-Native] Audio Bridge v9 initialized');
+        showNotification('Bridge v10 ready!', '#0a0');
+        console.log('[SF-Native] Audio Bridge v10 initialized');
       })();
     ''');
   }
