@@ -420,27 +420,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('=== Soundfly Audio Bridge v5 - YouTube + HTML Audio ===');
+        console.log('=== Soundfly Audio Bridge v6 - API Audio Interception ===');
         
         // State tracking
         window._sfBridge = {
           active: false,
           currentSrc: null,
-          audioElement: null,
           baseUrl: window.location.origin,
-          youtubeReady: false,
-          lastDetectedUrl: null
+          pendingAudioUrl: null
         };
         
         // Show visual notification (for debugging)
-        function showNotification(msg) {
+        function showNotification(msg, isSuccess) {
           console.log('[SF-Native] ' + msg);
-          // Create a visual toast
           var toast = document.createElement('div');
-          toast.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#333;color:#0f0;padding:8px 16px;border-radius:20px;z-index:99999;font-size:12px;';
+          toast.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:' + (isSuccess ? '#0a0' : '#333') + ';color:#fff;padding:8px 16px;border-radius:20px;z-index:99999;font-size:11px;max-width:90%;text-align:center;';
           toast.textContent = msg;
           document.body.appendChild(toast);
-          setTimeout(function() { toast.remove(); }, 3000);
+          setTimeout(function() { toast.remove(); }, 2500);
         }
         
         // Send message to Flutter native player
@@ -448,71 +445,123 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           var fullUrl = url;
           
           // Convert relative URLs to absolute
-          if (url && !url.startsWith('http') && !url.startsWith('blob:') && !url.startsWith('data:')) {
+          if (url && !url.startsWith('http')) {
             fullUrl = window._sfBridge.baseUrl + '/' + url.replace(/^\\//, '');
           }
           
-          console.log('[SF-Native] ' + action + ': ' + fullUrl);
-          showNotification(action + ': ' + (fullUrl ? fullUrl.substring(0, 50) + '...' : 'none'));
+          console.log('[SF-Native] Sending: ' + action + ' -> ' + fullUrl);
           
           if (window.flutter_inappwebview) {
             window.flutter_inappwebview.callHandler('nativeAudio', action, fullUrl || '');
+            return true;
           }
+          return false;
         }
         
-        // Check if this is a real audio URL
-        function isValidAudioUrl(url) {
-          if (!url || url.length < 5) return false;
-          if (url.startsWith('blob:') || url.startsWith('data:')) return false;
-          
+        // Check if URL is a Soundfly audio API URL
+        function isSoundflyAudioUrl(url) {
+          if (!url) return false;
+          // Match: /api/v1/search/audio/ or similar audio endpoints
+          return url.includes('/api/') && url.includes('/audio/');
+        }
+        
+        // Check if URL is any valid audio
+        function isAudioUrl(url) {
+          if (!url) return false;
           return url.includes('.mp3') || 
                  url.includes('.m4a') || 
                  url.includes('.wav') ||
                  url.includes('.ogg') ||
-                 url.includes('.flac') ||
-                 url.includes('.aac') ||
                  url.includes('storage/') ||
                  url.includes('track_media') ||
-                 url.includes('/stream') ||
-                 url.includes('/audio');
+                 isSoundflyAudioUrl(url);
         }
         
-        // ========== HTML AUDIO INTERCEPTION ==========
+        // ========== XHR INTERCEPTION - THIS IS THE KEY! ==========
+        var origXHROpen = XMLHttpRequest.prototype.open;
+        var origXHRSend = XMLHttpRequest.prototype.send;
+        
+        XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
+          this._sfUrl = url;
+          
+          if (isSoundflyAudioUrl(url)) {
+            console.log('[SF-Native] XHR Audio URL detected: ' + url);
+            window._sfBridge.pendingAudioUrl = url;
+          }
+          
+          return origXHROpen.apply(this, arguments);
+        };
+        
+        XMLHttpRequest.prototype.send = function(body) {
+          var xhr = this;
+          var url = this._sfUrl;
+          
+          if (isSoundflyAudioUrl(url)) {
+            // This is an audio request - intercept it!
+            showNotification('🎵 Audio detected! Starting native player...', true);
+            
+            // Build full URL
+            var fullUrl = url;
+            if (!url.startsWith('http')) {
+              fullUrl = window._sfBridge.baseUrl + '/' + url.replace(/^\\//, '');
+            }
+            
+            // Send to native player
+            window._sfBridge.currentSrc = fullUrl;
+            window._sfBridge.active = true;
+            
+            if (sendToFlutter('play', fullUrl)) {
+              showNotification('✅ Native player started!', true);
+            }
+          }
+          
+          return origXHRSend.apply(this, arguments);
+        };
+        
+        // ========== FETCH INTERCEPTION ==========
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+          var url = typeof input === 'string' ? input : (input.url || '');
+          
+          if (isSoundflyAudioUrl(url)) {
+            showNotification('🎵 Fetch audio: ' + url.substring(0, 50), true);
+            
+            var fullUrl = url;
+            if (!url.startsWith('http')) {
+              fullUrl = window._sfBridge.baseUrl + '/' + url.replace(/^\\//, '');
+            }
+            
+            window._sfBridge.currentSrc = fullUrl;
+            window._sfBridge.active = true;
+            sendToFlutter('play', fullUrl);
+          }
+          
+          return origFetch.apply(this, arguments);
+        };
+        
+        // ========== HTML AUDIO ELEMENT - MUTE IT ==========
         function interceptAudio(audio) {
           if (audio._sfIntercepted) return;
           audio._sfIntercepted = true;
           
-          showNotification('Found audio element!');
-          
+          // Mute web audio since native player will handle it
           var origPlay = audio.play.bind(audio);
-          var origPause = audio.pause.bind(audio);
-          
-          function getCurrentSrc() {
-            return audio.src || audio.currentSrc || audio.getAttribute('src') || '';
-          }
           
           audio.play = function() {
-            var src = getCurrentSrc();
-            showNotification('audio.play(): ' + src.substring(0, 40));
-            
-            if (isValidAudioUrl(src) && src !== window._sfBridge.currentSrc) {
-              window._sfBridge.active = true;
-              window._sfBridge.currentSrc = src;
-              window._sfBridge.audioElement = this;
+            if (window._sfBridge.active) {
+              // Mute the web audio - native handles sound
               this.muted = true;
               this.volume = 0;
-              sendToFlutter('play', src);
+              showNotification('Web audio muted (native playing)', false);
             }
-            
-            return origPlay().catch(function(e) { return Promise.resolve(); });
+            return origPlay().catch(function() { return Promise.resolve(); });
           };
           
-          audio.pause = function() {
+          audio.addEventListener('pause', function() {
             if (window._sfBridge.active) {
               sendToFlutter('pause', '');
             }
-            return origPause();
-          };
+          });
           
           audio.addEventListener('ended', function() {
             if (window._sfBridge.active) {
@@ -520,20 +569,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               window._sfBridge.active = false;
             }
           });
+          
+          audio.addEventListener('seeked', function() {
+            if (window._sfBridge.active) {
+              sendToFlutter('seek', String(this.currentTime));
+            }
+          });
         }
         
-        // Hook existing audio elements
+        // Hook existing and new audio elements
         document.querySelectorAll('audio').forEach(interceptAudio);
         
-        // Watch for new audio elements
         var observer = new MutationObserver(function(mutations) {
           mutations.forEach(function(mutation) {
             mutation.addedNodes.forEach(function(node) {
               if (node.nodeType === 1) {
                 if (node.tagName === 'AUDIO') interceptAudio(node);
-                if (node.tagName === 'IFRAME' && node.src && node.src.includes('youtube')) {
-                  showNotification('YouTube iframe detected!');
-                }
                 if (node.querySelectorAll) {
                   node.querySelectorAll('audio').forEach(interceptAudio);
                 }
@@ -541,84 +592,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             });
           });
         });
-        
         observer.observe(document.documentElement, { childList: true, subtree: true });
         
         // Override Audio constructor
         var OrigAudio = window.Audio;
         window.Audio = function(src) {
-          showNotification('new Audio(): ' + (src || 'no src'));
           var audio = new OrigAudio(src);
           interceptAudio(audio);
           return audio;
         };
         window.Audio.prototype = OrigAudio.prototype;
         
-        // ========== YOUTUBE INTERCEPTION ==========
-        // BeMusic uses YouTube iframe API - intercept postMessage
-        var origPostMessage = window.postMessage.bind(window);
-        window.postMessage = function(msg, origin) {
-          try {
-            if (typeof msg === 'string' && msg.includes('command')) {
-              var data = JSON.parse(msg);
-              if (data.event === 'command') {
-                showNotification('YT cmd: ' + data.func);
-                
-                // Detect play/pause commands to YouTube
-                if (data.func === 'playVideo' || data.func === 'cueVideoById') {
-                  showNotification('YouTube PLAY detected!');
-                  // YouTube is being used - notify user
-                  window._sfBridge.youtubeReady = true;
-                }
-                if (data.func === 'pauseVideo') {
-                  showNotification('YouTube PAUSE detected');
-                }
-              }
-            }
-          } catch(e) {}
-          return origPostMessage(msg, origin);
-        };
-        
-        // Listen for YouTube state changes via message events
-        window.addEventListener('message', function(event) {
-          try {
-            var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-            if (data && data.event === 'onStateChange') {
-              showNotification('YT State: ' + data.info);
-              // YouTube states: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
-              if (data.info === 1) {
-                showNotification('YouTube PLAYING!');
-              }
-            }
-            if (data && data.event === 'initialDelivery') {
-              showNotification('YT Ready: ' + JSON.stringify(data).substring(0, 60));
-            }
-          } catch(e) {}
-        });
-        
-        // ========== FETCH/XHR INTERCEPTION FOR AUDIO URLS ==========
-        var origFetch = window.fetch;
-        window.fetch = function(url, options) {
-          if (url && typeof url === 'string') {
-            if (isValidAudioUrl(url)) {
-              showNotification('Fetch audio: ' + url.substring(0, 50));
-              window._sfBridge.lastDetectedUrl = url;
-            }
-          }
-          return origFetch.apply(this, arguments);
-        };
-        
-        var origXHROpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url) {
-          if (url && isValidAudioUrl(url)) {
-            showNotification('XHR audio: ' + url.substring(0, 50));
-            window._sfBridge.lastDetectedUrl = url;
-          }
-          return origXHROpen.apply(this, arguments);
-        };
-        
-        showNotification('Bridge v5 loaded!');
-        console.log('[SF-Native] Audio Bridge v5 initialized');
+        showNotification('Bridge v6 ready!', true);
+        console.log('[SF-Native] Audio Bridge v6 initialized');
       })();
     ''');
   }
