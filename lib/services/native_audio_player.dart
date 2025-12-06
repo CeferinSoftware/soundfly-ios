@@ -29,29 +29,33 @@ class NativeAudioPlayer {
       _currentArtist = artist ?? 'Unknown Artist';
       _currentArtwork = artworkUrl;
       
-      // Only reload if URL changed
-      if (url != _currentUrl) {
-        _currentUrl = url;
-        
-        // Use AudioSource with metadata for lock screen controls
-        final audioSource = AudioSource.uri(
-          Uri.parse(url),
-          tag: MediaItem(
-            id: url,
-            title: _currentTitle!,
-            artist: _currentArtist,
-            artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
-          ),
-        );
-        
-        await _player.setAudioSource(audioSource);
-        debugPrint('NativeAudioPlayer: Loading $url with metadata');
-      }
+      // Always reload for new URLs
+      _currentUrl = url;
       
+      // Use AudioSource with metadata for lock screen controls
+      final audioSource = AudioSource.uri(
+        Uri.parse(url),
+        tag: MediaItem(
+          id: url,
+          title: _currentTitle!,
+          artist: _currentArtist,
+          artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
+        ),
+      );
+      
+      debugPrint('NativeAudioPlayer: Setting audio source...');
+      await _player.setAudioSource(audioSource);
+      
+      debugPrint('NativeAudioPlayer: Starting playback...');
       await _player.play();
-      debugPrint('NativeAudioPlayer: Playing');
+      
+      // Wait a bit for playback to actually start
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      debugPrint('NativeAudioPlayer: Playing = ${_player.playing}, state = ${_player.playerState.processingState}');
     } catch (e) {
       debugPrint('Error playing audio: $e');
+      rethrow;
     }
   }
   
