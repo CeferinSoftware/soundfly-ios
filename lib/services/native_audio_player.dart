@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:audio_session/audio_session.dart';
 
 /// Native Audio Player Service using just_audio
@@ -8,6 +9,9 @@ class NativeAudioPlayer {
   static final AudioPlayer _player = AudioPlayer();
   static final AudioPlayer _silentPlayer = AudioPlayer();
   static String? _currentUrl;
+  static String? _currentTitle;
+  static String? _currentArtist;
+  static String? _currentArtwork;
   static bool _isInitialized = false;
   static bool _silentPlaying = false;
   
@@ -57,16 +61,33 @@ class NativeAudioPlayer {
     }
   }
   
-  /// Play audio from URL
-  static Future<void> play(String url) async {
+  /// Play audio from URL with optional metadata for lock screen
+  static Future<void> play(String url, {String? title, String? artist, String? artworkUrl}) async {
     if (!_isInitialized) await initialize();
     
     try {
+      // Store metadata
+      _currentTitle = title ?? 'Soundfly';
+      _currentArtist = artist ?? 'Unknown Artist';
+      _currentArtwork = artworkUrl;
+      
       // Only reload if URL changed
       if (url != _currentUrl) {
         _currentUrl = url;
-        await _player.setUrl(url);
-        debugPrint('NativeAudioPlayer: Loading $url');
+        
+        // Use AudioSource with metadata for lock screen controls
+        final audioSource = AudioSource.uri(
+          Uri.parse(url),
+          tag: MediaItem(
+            id: url,
+            title: _currentTitle!,
+            artist: _currentArtist,
+            artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
+          ),
+        );
+        
+        await _player.setAudioSource(audioSource);
+        debugPrint('NativeAudioPlayer: Loading $url with metadata');
       }
       
       await _player.play();

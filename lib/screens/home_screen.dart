@@ -265,13 +265,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       if (args.isEmpty) return;
                       final command = args[0] as String;
                       final url = args.length > 1 ? args[1] as String : '';
+                      final title = args.length > 2 ? args[2] as String : 'Soundfly';
+                      final artist = args.length > 3 ? args[3] as String : 'Unknown';
                       
                       debugPrint('Native Audio Command: $command, URL: $url');
                       
                       switch (command) {
                         case 'play':
                           if (url.isNotEmpty) {
-                            NativeAudioPlayer.play(url);
+                            NativeAudioPlayer.play(url, title: title, artist: artist);
                           }
                           break;
                         case 'pause':
@@ -485,7 +487,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await NativeAudioPlayer.pause();
       _showSnackBar('Native audio paused', Colors.orange);
     } else {
-      await NativeAudioPlayer.play(testUrl);
+      await NativeAudioPlayer.play(
+        testUrl,
+        title: 'SoundHelix Song 1',
+        artist: 'SoundHelix Test',
+      );
       _showSnackBar('Playing test audio - minimize app to test background!', Colors.green);
     }
     setState(() {}); // Refresh UI
@@ -495,6 +501,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _currentYouTubeVideoId;
   bool _isExtracting = false;
   final YoutubeExplode _ytExplode = YoutubeExplode();
+  String? _currentVideoTitle;
+  String? _currentVideoArtist;
+  String? _currentVideoThumbnail;
   
   Future<void> _playYouTubeAudio(String videoId) async {
     if (videoId.isEmpty) return;
@@ -518,6 +527,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _showSnackBar('Extracting audio...', Colors.orange);
     
     try {
+      // Get video info for metadata
+      final video = await _ytExplode.videos.get(videoId);
+      _currentVideoTitle = video.title;
+      _currentVideoArtist = video.author;
+      _currentVideoThumbnail = video.thumbnails.highResUrl;
+      
+      debugPrint('Video: ${video.title} by ${video.author}');
+      
       // Get stream manifest using youtube_explode_dart
       final manifest = await _ytExplode.videos.streamsClient.getManifest(videoId);
       
@@ -537,8 +554,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         
         _isExtracting = false;
         
-        // Play with native player
-        await NativeAudioPlayer.play(audioUrl);
+        // Play with native player including metadata for lock screen
+        await NativeAudioPlayer.play(
+          audioUrl,
+          title: _currentVideoTitle ?? 'Soundfly',
+          artist: _currentVideoArtist ?? 'Unknown Artist',
+          artworkUrl: _currentVideoThumbnail,
+        );
         _showSnackBar('🎵 Background audio ready!', Colors.green);
         setState(() {});
       } else {

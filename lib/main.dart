@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/splash_screen.dart';
@@ -10,6 +11,14 @@ import 'services/native_audio_player.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize just_audio_background for iOS background audio
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.soundfly.music.audio',
+    androidNotificationChannelName: 'Soundfly Music',
+    androidNotificationOngoing: true,
+    androidStopForegroundOnPause: false,
+  );
   
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([
