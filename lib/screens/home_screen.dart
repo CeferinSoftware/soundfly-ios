@@ -504,7 +504,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _playYouTubeAudio(String videoId) async {
     if (videoId.isEmpty) return;
     
-    // Don't re-extract if already extracting or same video
     if (_isExtracting) {
       debugPrint('Already extracting, skipping');
       return;
@@ -524,122 +523,141 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _showSnackBar('Extracting audio...', Colors.orange);
     
     String? audioUrl;
+    String? errorMsg;
     
+    // Try Cobalt API first (most reliable in 2024-2025)
     try {
-      // Try Invidious instances first (more reliable)
-      final invidiousInstances = [
-        'inv.nadeko.net',
-        'invidious.nerdvpn.de',
-        'invidious.jing.rocks',
-        'yewtu.be',
-        'vid.puffyan.us',
+      final cobaltInstances = [
+        'api.cobalt.tools',
+        'cobalt-api.kwiatekmiki.com',
       ];
       
-      for (final instance in invidiousInstances) {
+      for (final instance in cobaltInstances) {
         if (audioUrl != null) break;
         
         try {
-          final url = 'https://$instance/api/v1/videos/$videoId';
-          debugPrint('Trying Invidious: $url');
+          final url = 'https://$instance/api/json';
+          debugPrint('Trying Cobalt: $instance');
           
           final client = HttpClient();
-          client.connectionTimeout = const Duration(seconds: 8);
+          client.connectionTimeout = const Duration(seconds: 10);
           
-          final request = await client.getUrl(Uri.parse(url));
-          request.headers.set('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)');
+          final request = await client.postUrl(Uri.parse(url));
+          request.headers.set('Content-Type', 'application/json');
           request.headers.set('Accept', 'application/json');
-          final response = await request.close();
+          request.headers.set('User-Agent', 'Mozilla/5.0');
           
-          debugPrint('Invidious $instance status: ${response.statusCode}');
+          // Cobalt API request body
+          final body = jsonEncode({
+            'url': 'https://www.youtube.com/watch?v=$videoId',
+            'isAudioOnly': true,
+            'aFormat': 'mp3',
+          });
+          request.write(body);
+          
+          final response = await request.close();
+          debugPrint('Cobalt $instance status: ${response.statusCode}');
           
           if (response.statusCode == 200) {
-            final body = await response.transform(const Utf8Decoder()).join();
-            final json = jsonDecode(body) as Map<String, dynamic>;
+            final responseBody = await response.transform(const Utf8Decoder()).join();
+            debugPrint('Cobalt response: ${responseBody.substring(0, min(200, responseBody.length))}');
             
-            // Get adaptive formats (audio only)
-            final adaptiveFormats = json['adaptiveFormats'] as List?;
-            debugPrint('Adaptive formats: ${adaptiveFormats?.length ?? 0}');
+            final json = jsonDecode(responseBody) as Map<String, dynamic>;
             
-            if (adaptiveFormats != null) {
-              for (final format in adaptiveFormats) {
-                final type = (format['type'] as String?) ?? '';
-                final formatUrl = format['url'] as String?;
-                
-                // Look for audio formats (m4a, webm audio, mp4 audio)
-                if (formatUrl != null && type.startsWith('audio/')) {
-                  audioUrl = formatUrl;
-                  debugPrint('Found audio: $type');
-                  break;
-                }
-              }
-            }
-            
-            if (audioUrl != null) {
-              debugPrint('Got URL from Invidious $instance');
-              client.close();
-              break;
+            if (json['status'] == 'stream' || json['status'] == 'redirect') {
+              audioUrl = json['url'] as String?;
+              debugPrint('Cobalt URL found!');
+            } else if (json['status'] == 'error') {
+              errorMsg = json['text'] as String?;
+              debugPrint('Cobalt error: $errorMsg');
             }
           }
           client.close();
         } catch (e) {
-          debugPrint('Invidious $instance failed: $e');
-        }
-      }
-      
-      // Fallback to Piped if Invidious failed
-      if (audioUrl == null) {
-        final pipedInstances = [
-          'pipedapi.kavin.rocks',
-          'pipedapi.adminforge.de',
-          'api.piped.yt',
-        ];
-        
-        for (final instance in pipedInstances) {
-          if (audioUrl != null) break;
-          
-          try {
-            final url = 'https://$instance/streams/$videoId';
-            debugPrint('Trying Piped: $url');
-            
-            final client = HttpClient();
-            client.connectionTimeout = const Duration(seconds: 8);
-            
-            final request = await client.getUrl(Uri.parse(url));
-            request.headers.set('User-Agent', 'Mozilla/5.0');
-            final response = await request.close();
-            
-            if (response.statusCode == 200) {
-              final body = await response.transform(const Utf8Decoder()).join();
-              final json = jsonDecode(body) as Map<String, dynamic>;
-              
-              final audioStreams = json['audioStreams'] as List?;
-              if (audioStreams != null && audioStreams.isNotEmpty) {
-                for (final stream in audioStreams) {
-                  final mimeType = (stream['mimeType'] as String?) ?? '';
-                  final streamUrl = stream['url'] as String?;
-                  
-                  if (streamUrl != null && mimeType.contains('audio')) {
-                    audioUrl = streamUrl;
-                    break;
-                  }
-                }
-              }
-            }
-            client.close();
-          } catch (e) {
-            debugPrint('Piped $instance failed: $e');
-          }
+          debugPrint('Cobalt $instance error: $e');
         }
       }
     } catch (e) {
-      debugPrint('Extraction error: $e');
+      debugPrint('Cobalt extraction failed: $e');
+    }
+    
+    // Try YouTube direct HLS if Cobalt failed
+    if (audioUrl == null) {
+      try {
+        // Some videos have direct HLS streams
+        final hlsUrl = 'https://www.youtube.com/watch?v=$videoId';
+        debugPrint('Cobalt failed, trying alternative methods...');
+        
+        // Try y2mate API
+        try {
+          final y2mateUrl = 'https://api.vevioz.com/api/button/mp3/$videoId';
+          debugPrint('Trying Vevioz: $y2mateUrl');
+          
+          final client = HttpClient();
+          client.connectionTimeout = const Duration(seconds: 10);
+          
+          final request = await client.getUrl(Uri.parse(y2mateUrl));
+          request.headers.set('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)');
+          final response = await request.close();
+          
+          debugPrint('Vevioz status: ${response.statusCode}');
+          
+          if (response.statusCode == 200) {
+            final body = await response.transform(const Utf8Decoder()).join();
+            
+            // Look for download link in response
+            final regex = RegExp(r'href="(https://[^"]+\.mp3[^"]*)"');
+            final match = regex.firstMatch(body);
+            if (match != null) {
+              audioUrl = match.group(1);
+              debugPrint('Vevioz URL found!');
+            }
+          }
+          client.close();
+        } catch (e) {
+          debugPrint('Vevioz failed: $e');
+        }
+      } catch (e) {
+        debugPrint('Alternative extraction failed: $e');
+      }
+    }
+    
+    // Try one more: yt-dlp proxy service
+    if (audioUrl == null) {
+      try {
+        final proxyUrls = [
+          'https://yt.lemnoslife.com/noKey/videos?part=contentDetails&id=$videoId',
+        ];
+        
+        for (final proxyUrl in proxyUrls) {
+          if (audioUrl != null) break;
+          
+          debugPrint('Trying proxy: $proxyUrl');
+          
+          try {
+            final client = HttpClient();
+            client.connectionTimeout = const Duration(seconds: 8);
+            
+            final request = await client.getUrl(Uri.parse(proxyUrl));
+            request.headers.set('User-Agent', 'Mozilla/5.0');
+            final response = await request.close();
+            
+            debugPrint('Proxy status: ${response.statusCode}');
+            client.close();
+          } catch (e) {
+            debugPrint('Proxy failed: $e');
+          }
+        }
+      } catch (e) {
+        debugPrint('Proxy extraction failed: $e');
+      }
     }
     
     _isExtracting = false;
     
     if (audioUrl != null && audioUrl.isNotEmpty) {
       debugPrint('=== PLAYING AUDIO ===');
-      debugPrint('URL length: ${audioUrl.length}');
+      debugPrint('URL: ${audioUrl.substring(0, min(100, audioUrl.length))}...');
       
       try {
         await NativeAudioPlayer.play(audioUrl);
@@ -651,9 +669,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     } else {
       debugPrint('No audio URL found');
-      _showSnackBar('Could not extract audio', Colors.red);
+      _showSnackBar('Could not extract audio - APIs blocked', Colors.red);
     }
   }
+  
+  int min(int a, int b) => a < b ? a : b;
 
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
