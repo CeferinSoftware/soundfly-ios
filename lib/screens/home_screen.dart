@@ -359,6 +359,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _hasError = false;
                   });
                   AudioBackgroundService.activate();
+                  // Inject early
+                  _injectAudioFixes(controller);
                 },
                 onLoadStop: (controller, url) async {
                   setState(() {
@@ -367,8 +369,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _pageLoadCount++;
                   _showInterstitialAd();
                   
-                  // Inject JavaScript for iOS audio support
+                  // Inject JavaScript again after page loads
                   await _injectAudioFixes(controller);
+                },
+                onProgressChanged: (controller, progress) {
+                  // Inject as soon as DOM is ready (around 30-50%)
+                  if (progress > 30 && progress < 60) {
+                    _injectAudioFixes(controller);
+                  }
                 },
                 onReceivedError: (controller, request, error) {
                   if (request.isForMainFrame ?? true) {
@@ -420,7 +428,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (_hasError && !_isLoading)
                 _buildErrorView(),
               
-              // DEBUG: Native audio status indicator and test button
+              // DEBUG: Native audio status indicator and test buttons
               Positioned(
                 bottom: 100,
                 right: 16,
@@ -440,7 +448,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Test play button
+                    // Test YouTube extraction button
+                    FloatingActionButton.small(
+                      heroTag: 'testYouTube',
+                      backgroundColor: Colors.red,
+                      onPressed: _testYouTubeExtraction,
+                      child: const Icon(Icons.play_arrow, color: Colors.white),
+                    ),
+                    const SizedBox(height: 8),
+                    // Test MP3 button
                     FloatingActionButton.small(
                       heroTag: 'testAudio',
                       backgroundColor: Colors.purple,
@@ -455,6 +471,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+  
+  /// Test YouTube extraction with a known video ID
+  Future<void> _testYouTubeExtraction() async {
+    // Use a popular music video ID for testing
+    const testVideoId = 'dQw4w9WgXcQ'; // Never Gonna Give You Up
+    
+    _showSnackBar('Testing YouTube extraction: $testVideoId', Colors.orange);
+    await _playYouTubeAudio(testVideoId);
   }
   
   /// Test native audio player with a sample MP3
