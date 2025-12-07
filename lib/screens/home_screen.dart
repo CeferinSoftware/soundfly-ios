@@ -517,11 +517,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       
       // Get best quality audio stream
       if (manifest.audioOnly.isNotEmpty) {
-        // Sort by bitrate and get highest quality (prefer mp4/m4a for iOS compatibility)
-        final audioStreams = manifest.audioOnly.toList()
-          ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
+        // Prefer MP4/M4A container for iOS compatibility (avoid webm/opus)
+        var audioStreams = manifest.audioOnly.toList();
         
-        final bestAudio = audioStreams.first;
+        // First try to find MP4/M4A streams
+        var mp4Streams = audioStreams.where((s) => 
+          s.container.name.toLowerCase().contains('mp4') || 
+          s.container.name.toLowerCase().contains('m4a')
+        ).toList();
+        
+        AudioOnlyStreamInfo bestAudio;
+        if (mp4Streams.isNotEmpty) {
+          mp4Streams.sort((a, b) => b.bitrate.compareTo(a.bitrate));
+          bestAudio = mp4Streams.first;
+          debugPrint('Using MP4/M4A stream for iOS compatibility');
+        } else {
+          // Fallback to any stream
+          audioStreams.sort((a, b) => b.bitrate.compareTo(a.bitrate));
+          bestAudio = audioStreams.first;
+          debugPrint('No MP4 streams, using: ${bestAudio.container.name}');
+        }
         
         debugPrint('Best audio: ${bestAudio.bitrate.kiloBitsPerSecond}kbps, container: ${bestAudio.container.name}');
         
@@ -529,7 +544,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         
         // Download audio to local file for reliable background playback
         final tempDir = await getTemporaryDirectory();
-        final audioFile = File('${tempDir.path}/yt_audio_$videoId.${bestAudio.container.name}');
+        // Always use .m4a extension for iOS compatibility
+        final audioFile = File('${tempDir.path}/yt_audio_$videoId.m4a');
         
         // Delete old file if exists
         if (await audioFile.exists()) {
@@ -547,7 +563,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           fileStream.add(chunk);
           downloaded += chunk.length;
           
-          // Show progress every 10%
+          // Show progress every 20%
           final progress = (downloaded / totalSize * 100).round();
           if (progress % 20 == 0) {
             debugPrint('Download progress: $progress%');
@@ -558,13 +574,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await fileStream.close();
         
         debugPrint('Audio downloaded to: ${audioFile.path}');
-        debugPrint('File size: ${await audioFile.length()} bytes');
+        final fileSize = await audioFile.length();
+        debugPrint('File size: $fileSize bytes');
+        
+        if (fileSize == 0) {
+          throw Exception('Downloaded file is empty');
+        }
         
         _isExtracting = false;
         
-        // Play from LOCAL file - this works in background!
+        // Play from LOCAL file using file:// URI
+        final fileUri = 'file://${audioFile.path}';
+        debugPrint('Playing from: $fileUri');
+        
         await NativeAudioPlayer.play(
-          audioFile.path,
+          fileUri,
           title: _currentVideoTitle ?? 'Soundfly',
           artist: _currentVideoArtist ?? 'Unknown Artist',
           artworkUrl: _currentVideoThumbnail,
