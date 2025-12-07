@@ -417,7 +417,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Test YouTube extraction button
+                    // Test YouTube extraction button (RED)
                     FloatingActionButton.small(
                       heroTag: 'testYouTube',
                       backgroundColor: Colors.red,
@@ -425,12 +425,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       child: const Icon(Icons.play_arrow, color: Colors.white),
                     ),
                     const SizedBox(height: 8),
-                    // Test MP3 button
+                    // Test MP3 button (PURPLE) - SoundHelix
                     FloatingActionButton.small(
                       heroTag: 'testAudio',
                       backgroundColor: Colors.purple,
                       onPressed: _testNativeAudio,
                       child: const Icon(Icons.music_note, color: Colors.white),
+                    ),
+                    const SizedBox(height: 8),
+                    // Test another URL (BLUE) - Internet Archive
+                    FloatingActionButton.small(
+                      heroTag: 'testArchive',
+                      backgroundColor: Colors.blue,
+                      onPressed: _testAnotherAudio,
+                      child: const Icon(Icons.cloud, color: Colors.white),
                     ),
                   ],
                 ),
@@ -468,6 +476,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _showSnackBar('Playing test audio - minimize app to test background!', Colors.green);
     }
     setState(() {}); // Refresh UI
+  }
+  
+  /// Test with another public audio URL (Internet Archive)
+  Future<void> _testAnotherAudio() async {
+    // Public domain audio from Internet Archive
+    const testUrl = 'https://archive.org/download/testmp3testfile/mpthreetest.mp3';
+    
+    await NativeAudioPlayer.play(
+      testUrl,
+      title: 'Archive Test',
+      artist: 'Internet Archive',
+    );
+    _showSnackBar('Playing Archive audio - test background!', Colors.blue);
+    setState(() {});
   }
   
   /// Play YouTube audio using youtube_explode_dart (direct extraction)
