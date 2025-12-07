@@ -1,7 +1,7 @@
 name: soundfly_ios
 description: Soundfly Music Streaming App for iOS - A Flutter WebView application that connects to your Soundfly web backend.
 publish_to: 'none'
-version: 15.0.0+14037
+version: 15.0.0+14038
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -32,6 +32,9 @@ dependencies:
   # URL launcher for external links
   url_launcher: ^6.2.2
   
+  # HTTP for API calls
+  http: ^1.2.0
+  
   # Cupertino icons for iOS styling
   cupertino_icons: ^1.0.6
   
@@ -47,9 +50,6 @@ dependencies:
   # Just Audio - robust background audio support
   just_audio: ^0.9.39
   just_audio_background: ^0.0.1-beta.13
-  
-  # YouTube audio extraction (direct, no third-party APIs)
-  youtube_explode_dart: ^2.2.1
 
 dev_dependencies:
   flutter_test:

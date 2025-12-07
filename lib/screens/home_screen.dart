@@ -7,12 +7,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
 import '../services/admob_service.dart';
 import '../services/native_audio_player.dart';
+import '../services/cobalt_service.dart';
 import 'no_internet_screen.dart';
 
 /// Home Screen with InAppWebView
@@ -492,13 +492,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {});
   }
   
-  /// Play YouTube audio using youtube_explode_dart (direct extraction)
+  /// Play YouTube audio using Cobalt API (free service)
   String? _currentYouTubeVideoId;
   bool _isExtracting = false;
-  final YoutubeExplode _ytExplode = YoutubeExplode();
+  final CobaltService _cobaltService = CobaltService();
   String? _currentVideoTitle;
   String? _currentVideoArtist;
-  String? _currentVideoThumbnail;
   
   Future<void> _playYouTubeAudio(String videoId) async {
     if (videoId.isEmpty) return;
@@ -516,90 +515,55 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _isExtracting = true;
     _currentYouTubeVideoId = videoId;
     
-    debugPrint('=== EXTRACTING YOUTUBE AUDIO ===');
+    debugPrint('=== EXTRACTING YOUTUBE AUDIO VIA COBALT ===');
     debugPrint('Video ID: $videoId');
     
-    _showSnackBar('Extracting audio...', Colors.orange);
+    _showSnackBar('Extracting audio via Cobalt...', Colors.orange);
     
     try {
-      // Get video info for metadata
-      final video = await _ytExplode.videos.get(videoId);
-      _currentVideoTitle = video.title;
-      _currentVideoArtist = video.author;
-      _currentVideoThumbnail = video.thumbnails.highResUrl;
+      // Build YouTube URL from video ID
+      final youtubeUrl = 'https://www.youtube.com/watch?v=$videoId';
       
-      debugPrint('Video: ${video.title} by ${video.author}');
+      // Use Cobalt to get audio URL
+      final audioUrl = await _cobaltService.getAudioUrl(youtubeUrl);
       
-      // Get stream manifest using youtube_explode_dart
-      final manifest = await _ytExplode.videos.streamsClient.getManifest(videoId);
-      
-      debugPrint('Got manifest! Audio streams: ${manifest.audioOnly.length}');
-      
-      // Get best quality audio stream
-      if (manifest.audioOnly.isNotEmpty) {
-        // Prefer MP4/M4A container for iOS compatibility (avoid webm/opus)
-        var audioStreams = manifest.audioOnly.toList();
-        
-        // First try to find MP4/M4A streams
-        var mp4Streams = audioStreams.where((s) => 
-          s.container.name.toLowerCase().contains('mp4') || 
-          s.container.name.toLowerCase().contains('m4a')
-        ).toList();
-        
-        AudioOnlyStreamInfo bestAudio;
-        if (mp4Streams.isNotEmpty) {
-          mp4Streams.sort((a, b) => b.bitrate.compareTo(a.bitrate));
-          bestAudio = mp4Streams.first;
-          debugPrint('Using MP4/M4A stream for iOS compatibility');
-        } else {
-          // Fallback to any stream
-          audioStreams.sort((a, b) => b.bitrate.compareTo(a.bitrate));
-          bestAudio = audioStreams.first;
-          debugPrint('No MP4 streams, using: ${bestAudio.container.name}');
-        }
-        
-        debugPrint('Best audio: ${bestAudio.bitrate.kiloBitsPerSecond}kbps, container: ${bestAudio.container.name}');
-        
-        // Get the direct streaming URL (like the purple button uses a URL)
-        final audioUrl = bestAudio.url.toString();
-        debugPrint('Audio URL length: ${audioUrl.length}');
+      if (audioUrl != null) {
+        debugPrint('Cobalt returned audio URL: ${audioUrl.substring(0, min(100, audioUrl.length))}...');
         
         _isExtracting = false;
         
-        // Play directly from YouTube URL (same as purple button uses URL)
+        // Play the audio
         _showSnackBar('Starting playback...', Colors.blue);
         
         await NativeAudioPlayer.play(
           audioUrl,
-          title: _currentVideoTitle ?? 'Soundfly',
+          title: _currentVideoTitle ?? 'Soundfly Music',
           artist: _currentVideoArtist ?? 'Unknown Artist',
-          artworkUrl: _currentVideoThumbnail,
         );
         
         // Wait for playback to stabilize
         await Future.delayed(const Duration(seconds: 2));
         
         if (NativeAudioPlayer.isPlaying) {
-          _showSnackBar('🎵 Playing! Wait 3 sec before background', Colors.green);
+          _showSnackBar('🎵 Cobalt: Playing! Test background now', Colors.green);
         } else {
           _showSnackBar('⚠️ Playback may have issues', Colors.orange);
         }
         setState(() {});
       } else {
         _isExtracting = false;
-        debugPrint('No audio streams found');
-        _showSnackBar('No audio streams found', Colors.red);
+        debugPrint('Cobalt returned null - no audio URL');
+        _showSnackBar('Cobalt: Could not extract audio', Colors.red);
       }
     } catch (e) {
       _isExtracting = false;
-      debugPrint('YouTube extraction error: $e');
-      _showSnackBar('Extraction failed: ${e.toString().substring(0, min(50, e.toString().length))}', Colors.red);
+      debugPrint('Cobalt extraction error: $e');
+      _showSnackBar('Cobalt failed: ${e.toString().substring(0, min(50, e.toString().length))}', Colors.red);
     }
   }
   
   @override
   void dispose() {
-    _ytExplode.close();
     WidgetsBinding.instance.removeObserver(this);
     _connectivitySubscription?.cancel();
     WakelockPlus.disable();
