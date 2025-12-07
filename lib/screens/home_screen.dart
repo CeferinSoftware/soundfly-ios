@@ -2,14 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show min;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
-import 'package:path_provider/path_provider.dart';
 import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
@@ -540,60 +538,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         
         debugPrint('Best audio: ${bestAudio.bitrate.kiloBitsPerSecond}kbps, container: ${bestAudio.container.name}');
         
-        _showSnackBar('Downloading for background play...', Colors.blue);
-        
-        // Download audio to local file for reliable background playback
-        final tempDir = await getTemporaryDirectory();
-        // Always use .m4a extension for iOS compatibility
-        final audioFile = File('${tempDir.path}/yt_audio_$videoId.m4a');
-        
-        // Delete old file if exists
-        if (await audioFile.exists()) {
-          await audioFile.delete();
-        }
-        
-        // Download the audio stream
-        final audioStream = _ytExplode.videos.streamsClient.get(bestAudio);
-        final fileStream = audioFile.openWrite();
-        
-        int downloaded = 0;
-        final totalSize = bestAudio.size.totalBytes;
-        
-        await for (final chunk in audioStream) {
-          fileStream.add(chunk);
-          downloaded += chunk.length;
-          
-          // Show progress every 20%
-          final progress = (downloaded / totalSize * 100).round();
-          if (progress % 20 == 0) {
-            debugPrint('Download progress: $progress%');
-          }
-        }
-        
-        await fileStream.flush();
-        await fileStream.close();
-        
-        debugPrint('Audio downloaded to: ${audioFile.path}');
-        final fileSize = await audioFile.length();
-        debugPrint('File size: $fileSize bytes');
-        
-        if (fileSize == 0) {
-          throw Exception('Downloaded file is empty');
-        }
+        // Get the direct streaming URL (like the purple button uses a URL)
+        final audioUrl = bestAudio.url.toString();
+        debugPrint('Audio URL length: ${audioUrl.length}');
         
         _isExtracting = false;
         
-        // Play from LOCAL file using file:// URI
-        final fileUri = 'file://${audioFile.path}';
-        debugPrint('Playing from: $fileUri');
+        // Play directly from YouTube URL (same as purple button uses URL)
+        _showSnackBar('Starting playback...', Colors.blue);
         
         await NativeAudioPlayer.play(
-          fileUri,
+          audioUrl,
           title: _currentVideoTitle ?? 'Soundfly',
           artist: _currentVideoArtist ?? 'Unknown Artist',
           artworkUrl: _currentVideoThumbnail,
         );
-        _showSnackBar('🎵 Background audio ready!', Colors.green);
+        
+        // Wait for playback to stabilize
+        await Future.delayed(const Duration(seconds: 2));
+        
+        if (NativeAudioPlayer.isPlaying) {
+          _showSnackBar('🎵 Playing! Wait 3 sec before background', Colors.green);
+        } else {
+          _showSnackBar('⚠️ Playback may have issues', Colors.orange);
+        }
         setState(() {});
       } else {
         _isExtracting = false;
