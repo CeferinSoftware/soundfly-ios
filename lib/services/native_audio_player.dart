@@ -23,10 +23,10 @@ class NativeAudioPlayer {
       _audioSession = await AudioSession.instance;
       await _audioSession!.configure(const AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers,
         avAudioSessionMode: AVAudioSessionMode.defaultMode,
         avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
-        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
         androidAudioAttributes: AndroidAudioAttributes(
           contentType: AndroidAudioContentType.music,
           usage: AndroidAudioUsage.media,
@@ -38,6 +38,20 @@ class NativeAudioPlayer {
       // Activate the session
       await _audioSession!.setActive(true);
       debugPrint('NativeAudioPlayer: Audio session configured and activated');
+      
+      // Listen for audio session interruptions (calls, etc)
+      _audioSession!.interruptionEventStream.listen((event) {
+        if (event.begin) {
+          debugPrint('NativeAudioPlayer: Audio interrupted');
+          _player.pause();
+        } else {
+          debugPrint('NativeAudioPlayer: Audio interruption ended');
+          // Resume if we were playing before
+          if (_player.playerState.processingState != ProcessingState.completed) {
+            _player.play();
+          }
+        }
+      });
       
       _isInitialized = true;
       debugPrint('NativeAudioPlayer initialized with background support');
@@ -68,34 +82,58 @@ class NativeAudioPlayer {
       
       // Determine if source is a local file or URL
       final bool isLocalFile = source.startsWith('/') || source.startsWith('file://');
-      final Uri sourceUri = isLocalFile 
-          ? Uri.file(source.replaceFirst('file://', ''))
-          : Uri.parse(source);
       
       debugPrint('NativeAudioPlayer: Source type = ${isLocalFile ? "LOCAL FILE" : "URL"}');
-      debugPrint('NativeAudioPlayer: URI = $sourceUri');
+      debugPrint('NativeAudioPlayer: Source = ${source.length > 100 ? source.substring(0, 100) : source}...');
       
-      // Use AudioSource with metadata for lock screen controls
-      final audioSource = AudioSource.uri(
-        sourceUri,
-        tag: MediaItem(
-          id: source,
-          title: _currentTitle!,
-          artist: _currentArtist,
-          artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
-        ),
-      );
+      AudioSource audioSource;
+      
+      if (isLocalFile) {
+        final Uri sourceUri = Uri.file(source.replaceFirst('file://', ''));
+        audioSource = AudioSource.uri(
+          sourceUri,
+          tag: MediaItem(
+            id: source,
+            title: _currentTitle!,
+            artist: _currentArtist,
+            artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
+          ),
+        );
+      } else {
+        // For URLs (especially streaming tunnels), add headers for better compatibility
+        final Uri sourceUri = Uri.parse(source);
+        audioSource = AudioSource.uri(
+          sourceUri,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+            'Accept': '*/*',
+            'Accept-Encoding': 'identity',
+            'Connection': 'keep-alive',
+          },
+          tag: MediaItem(
+            id: source,
+            title: _currentTitle!,
+            artist: _currentArtist,
+            artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
+          ),
+        );
+      }
       
       debugPrint('NativeAudioPlayer: Setting audio source...');
-      await _player.setAudioSource(audioSource);
+      await _player.setAudioSource(audioSource, preload: true);
+      
+      // Wait for buffering before starting playback
+      await Future.delayed(const Duration(milliseconds: 300));
       
       debugPrint('NativeAudioPlayer: Starting playback...');
       await _player.play();
       
-      // Wait a bit for playback to actually start
+      // Wait for playback to stabilize
       await Future.delayed(const Duration(milliseconds: 500));
       
       debugPrint('NativeAudioPlayer: Playing = ${_player.playing}, state = ${_player.playerState.processingState}');
+    } catch (e) {
+      debugPrint('Error playing audio: $e');
     } catch (e) {
       debugPrint('Error playing audio: $e');
       rethrow;
