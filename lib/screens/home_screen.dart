@@ -426,44 +426,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _isExtracting = true;
     _currentYouTubeVideoId = videoId;
     
-    debugPrint('=== EXTRACTING YOUTUBE AUDIO ===');
+    debugPrint('=== PLAYING AUDIO ===');
     debugPrint('Video ID: $videoId');
     
     _showSnackBar('🎵 Preparando audio...', Colors.orange);
     
     try {
-      // Build YouTube URL from video ID
-      final youtubeUrl = 'https://www.youtube.com/watch?v=$videoId';
-      // Use Cobalt to get audio URL
-      final audioUrl = await _cobaltService.getAudioUrl(youtubeUrl);
+      // TEST MODE: Use a direct MP3 URL to test if background audio works
+      // This is a public domain song that should work perfectly in background
+      // If this works but Cobalt doesn't, the problem is with Cobalt tunnel URLs
+      const testAudioUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
       
-      if (audioUrl != null) {
-        debugPrint('Got audio URL, starting playback...');
-        _isExtracting = false;
-        
-        // Play the audio with native player
-        await NativeAudioPlayer.play(
-          audioUrl,
-          title: _currentVideoTitle ?? 'Soundfly Music',
-          artist: _currentVideoArtist ?? 'Unknown Artist',
-        );
-        
-        // Brief wait for playback to start
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        if (NativeAudioPlayer.isPlaying) {
-          _showSnackBar('🎵 Reproduciendo', Colors.green);
-        }
-        setState(() {});
-      } else {
-        _isExtracting = false;
-        debugPrint('Could not get audio URL');
-        _showSnackBar('⚠️ Error al extraer audio', Colors.red);
+      debugPrint('TEST MODE: Using direct MP3 URL to test background playback');
+      _isExtracting = false;
+      
+      // Play the test audio with native player
+      await NativeAudioPlayer.play(
+        testAudioUrl,
+        title: _currentVideoTitle ?? 'TEST - Background Audio',
+        artist: _currentVideoArtist ?? 'Prueba de segundo plano',
+      );
+      
+      // Brief wait for playback to start
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      if (NativeAudioPlayer.isPlaying) {
+        _showSnackBar('🎵 TEST: Minimiza la app ahora!', Colors.green);
       }
+      setState(() {});
     } catch (e) {
       _isExtracting = false;
-      debugPrint('Extraction error: $e');
-      _showSnackBar('⚠️ Error de extracción', Colors.red);
+      debugPrint('Playback error: $e');
+      _showSnackBar('⚠️ Error de reproducción', Colors.red);
     }
   }
   
