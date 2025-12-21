@@ -249,6 +249,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _webViewController = controller;
                   debugPrint('WebView created');
                   
+                  // Handler for direct audio URLs (from backend with yt-dlp)
+                  controller.addJavaScriptHandler(
+                    handlerName: 'directAudio',
+                    callback: (args) async {
+                      if (args.isEmpty) return;
+                      final command = args[0] as String;
+                      final url = args.length > 1 ? args[1] as String : '';
+                      final title = args.length > 2 ? args[2] as String : 'Soundfly Music';
+                      final artist = args.length > 3 ? args[3] as String : 'Unknown Artist';
+                      
+                      debugPrint('Direct Audio Command: $command');
+                      
+                      if (command == 'play' && url.isNotEmpty) {
+                        await _playDirectAudio(url, title, artist);
+                      }
+                    },
+                  );
+                  
                   // Add JavaScript handler for native audio player
                   controller.addJavaScriptHandler(
                     handlerName: 'nativeAudio',
@@ -287,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     },
                   );
                   
-                  // Add handler for YouTube audio extraction and playback
+                  // Add handler for YouTube audio extraction and playback (Cobalt fallback)
                   controller.addJavaScriptHandler(
                     handlerName: 'youtubeAudio',
                     callback: (args) async {
@@ -302,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         case 'play':
                         case 'background':
                           if (videoId.isNotEmpty) {
-                            // Extract and play YouTube audio via native player
+                            // Extract and play YouTube audio via Cobalt (fallback)
                             _playYouTubeAudio(videoId);
                           }
                           break;
@@ -313,8 +331,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           NativeAudioPlayer.stop();
                           break;
                         case 'foreground':
-                          // When app comes back, we could stop native and let WebView play
-                          // But for now, keep native playing for consistency
+                          // Keep native playing for consistency
                           break;
                       }
                     },
@@ -403,13 +420,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
   
-  /// Play YouTube audio using Cobalt API (free service)
+  /// Play audio using native player (supports background playback)
   String? _currentYouTubeVideoId;
   bool _isExtracting = false;
   final CobaltService _cobaltService = CobaltService();
   String? _currentVideoTitle;
   String? _currentVideoArtist;
   
+  /// Play audio directly from URL (called when backend provides audio_url)
+  Future<void> _playDirectAudio(String audioUrl, String? title, String? artist) async {
+    debugPrint('=== PLAYING DIRECT AUDIO ===');
+    debugPrint('URL: ${audioUrl.substring(0, audioUrl.length > 80 ? 80 : audioUrl.length)}...');
+    
+    _currentVideoTitle = title;
+    _currentVideoArtist = artist;
+    
+    try {
+      await NativeAudioPlayer.play(
+        audioUrl,
+        title: title ?? 'Soundfly Music',
+        artist: artist ?? 'Unknown Artist',
+      );
+      
+      await Future.delayed(const Duration(milliseconds: 300));
+      
+      if (NativeAudioPlayer.isPlaying) {
+        _showSnackBar('🎵 Reproduciendo', Colors.green);
+      }
+      setState(() {});
+    } catch (e) {
+      debugPrint('Direct audio error: $e');
+      _showSnackBar('⚠️ Error de reproducción', Colors.red);
+    }
+  }
+  
+  /// Play YouTube audio (fallback when backend doesn't provide audio_url)
   Future<void> _playYouTubeAudio(String videoId) async {
     if (videoId.isEmpty) return;
     
@@ -426,38 +471,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _isExtracting = true;
     _currentYouTubeVideoId = videoId;
     
-    debugPrint('=== PLAYING AUDIO ===');
+    debugPrint('=== EXTRACTING YOUTUBE AUDIO (Cobalt fallback) ===');
     debugPrint('Video ID: $videoId');
     
     _showSnackBar('🎵 Preparando audio...', Colors.orange);
     
     try {
-      // TEST MODE: Use a direct MP3 URL to test if background audio works
-      // This is a public domain song that should work perfectly in background
-      // If this works but Cobalt doesn't, the problem is with Cobalt tunnel URLs
-      const testAudioUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+      final youtubeUrl = 'https://www.youtube.com/watch?v=$videoId';
+      final audioUrl = await _cobaltService.getAudioUrl(youtubeUrl);
       
-      debugPrint('TEST MODE: Using direct MP3 URL to test background playback');
       _isExtracting = false;
       
-      // Play the test audio with native player
-      await NativeAudioPlayer.play(
-        testAudioUrl,
-        title: _currentVideoTitle ?? 'TEST - Background Audio',
-        artist: _currentVideoArtist ?? 'Prueba de segundo plano',
-      );
-      
-      // Brief wait for playback to start
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      if (NativeAudioPlayer.isPlaying) {
-        _showSnackBar('🎵 TEST: Minimiza la app ahora!', Colors.green);
+      if (audioUrl != null) {
+        debugPrint('Cobalt returned URL, starting playback...');
+        
+        await NativeAudioPlayer.play(
+          audioUrl,
+          title: _currentVideoTitle ?? 'Soundfly Music',
+          artist: _currentVideoArtist ?? 'Unknown Artist',
+        );
+        
+        await Future.delayed(const Duration(milliseconds: 300));
+        
+        if (NativeAudioPlayer.isPlaying) {
+          _showSnackBar('🎵 Reproduciendo', Colors.green);
+        }
+        setState(() {});
+      } else {
+        debugPrint('Cobalt returned null');
+        _showSnackBar('⚠️ Error al extraer audio', Colors.red);
       }
-      setState(() {});
     } catch (e) {
       _isExtracting = false;
-      debugPrint('Playback error: $e');
-      _showSnackBar('⚠️ Error de reproducción', Colors.red);
+      debugPrint('Extraction error: $e');
+      _showSnackBar('⚠️ Error de extracción', Colors.red);
     }
   }
   
@@ -489,7 +536,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           toast.style.cssText = 'position:fixed;top:80px;left:10px;right:10px;background:' + (color || '#333') + ';color:#fff;padding:12px;border-radius:8px;z-index:999999;font-size:14px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.5);font-weight:bold;';
           toast.textContent = msg;
           document.body.appendChild(toast);
-          setTimeout(function() { toast.remove(); }, 4000);
+          setTimeout(function() { toast.remove(); }, 3000);
+        }
+        
+        // Mute all WebView audio when native player takes over
+        function muteWebViewAudio() {
+          // Mute all audio/video elements
+          document.querySelectorAll('audio, video').forEach(function(el) {
+            el.muted = true;
+            el.pause();
+          });
+          // Mute YouTube iframes by removing src temporarily
+          document.querySelectorAll('iframe[src*="youtube"]').forEach(function(iframe) {
+            iframe.contentWindow.postMessage('{"event":"command","func":"pauseVideo","args":""}', '*');
+          });
+          console.log('[SF-Bridge] WebView audio muted');
         }
         
         // Send YouTube video ID to Flutter for native playback
@@ -502,8 +563,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           window._sfBridge.currentVideoId = videoId;
           window._sfBridge.currentTrackInfo = trackInfo;
           
+          // Mute WebView audio - native player will handle it
+          muteWebViewAudio();
+          
           console.log('[SF-Bridge] Sending YouTube ID to Flutter: ' + videoId);
-          showNotification('🎵 Preparando: ' + (trackInfo ? trackInfo.name : videoId), '#0a0');
+          showNotification('🎵 Cargando: ' + (trackInfo ? trackInfo.name : videoId), '#f90');
           
           if (window.flutter_inappwebview) {
             window.flutter_inappwebview.callHandler('youtubeAudio', 'play', videoId);
@@ -533,14 +597,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (data && data.results && Array.isArray(data.results) && data.results.length > 0) {
               var firstResult = data.results[0];
               
-              // Check if backend provides direct audio_url (preferred)
+              // Check if backend provides direct audio_url (preferred - from yt-dlp)
               if (firstResult && firstResult.audio_url) {
-                console.log('[SF-Bridge] Backend provided audio_url!');
-                showNotification('🎵 Reproduciendo: ' + (trackInfo.name || firstResult.title), '#0a0');
+                console.log('[SF-Bridge] Backend provided audio_url! Using native player.');
+                
+                // Mute WebView audio - native player will handle it
+                muteWebViewAudio();
                 
                 // Send audio URL directly to Flutter for native playback
                 if (window.flutter_inappwebview) {
-                  window.flutter_inappwebview.callHandler('nativeAudio', 'play', firstResult.audio_url, trackInfo.name, trackInfo.artist);
+                  window.flutter_inappwebview.callHandler('directAudio', 'play', firstResult.audio_url, trackInfo.name, trackInfo.artist);
                 }
                 return true;
               }
@@ -548,7 +614,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // Fallback: Use video ID and let Flutter extract via Cobalt
               if (firstResult && firstResult.id) {
                 var videoId = firstResult.id;
-                console.log('[SF-Bridge] Using video ID fallback: ' + videoId);
+                console.log('[SF-Bridge] No audio_url, using Cobalt fallback: ' + videoId);
                 playYouTubeNatively(videoId, trackInfo);
                 return true;
               }
